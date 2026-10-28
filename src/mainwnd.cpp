@@ -1,5 +1,4 @@
 #include "stdafx.h"
-#include "common.h"
 #include "options.h"
 #include "optionsdlg.h"
 #include "optpins.h"
@@ -20,38 +19,42 @@ LPCWSTR MainWnd::className = L"EFDeskPins";
 //
 class AboutDlg {
 public:
-    static BOOL CALLBACK proc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
+    static INT_PTR CALLBACK proc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
     {
-        static HFONT boldGUIFont, underlineGUIFont;
+        static HFONT boldGUIFont;
 
         switch (msg) {
             case WM_INITDIALOG:
-                return evInitDlg(wnd, boldGUIFont, underlineGUIFont);
+                return evInitDlg(wnd, boldGUIFont);
             case WM_DESTROY:
-                evTermDlg(wnd, boldGUIFont, underlineGUIFont);
+                app.aboutDlg = 0;
+                if (boldGUIFont) {
+                    DeleteObject(boldGUIFont);
+                    boldGUIFont = 0;
+                }
                 return true;
             case App::WM_PINSTATUS:
                 updateStatusMessage(wnd);
                 return true;
-            //case WM_ACTIVATE:
-            //  app.activeModelessDlg = (LOWORD(wparam) == WA_INACTIVE) ? 0 : wnd;
-            //  return false;
-            case WM_COMMAND: {
-                int id = LOWORD(wparam);
-                int code = HIWORD(wparam);
-                switch (id) {
+            case WM_NOTIFY: {
+                NMHDR& nm = *reinterpret_cast<NMHDR*>(lparam);
+                if ((nm.idFrom == IDC_MAIL || nm.idFrom == IDC_WEB) &&
+                    (nm.code == NM_CLICK || nm.code == NM_RETURN))
+                {
+                    const NMLINK& link = *reinterpret_cast<NMLINK*>(lparam);
+                    ShellExecute(wnd, L"open", link.item.szUrl, 0, 0, SW_SHOWNORMAL);
+                    return true;
+                }
+                return false;
+            }
+            case WM_COMMAND:
+                switch (LOWORD(wparam)) {
                     case IDOK:
                     case IDCANCEL:
                         DestroyWindow(wnd);
                         return true;
-                    case IDC_LOGO:
-                        if (code == STN_DBLCLK) {
-                            showSpecialInfo(wnd);
-                            return true;
-                        }
                 }
                 return false;
-            }
         }
         return false;
     }
@@ -61,21 +64,18 @@ public:
         SetDlgItemInt(wnd, IDC_STATUS, app.pinsUsed, false);
     }
 
-
-    static bool evInitDlg(HWND wnd, HFONT& boldGUIFont, HFONT& underlineGUIFont)
+    static bool evInitDlg(HWND wnd, HFONT& boldGUIFont)
     {
         app.aboutDlg = wnd;
 
         updateStatusMessage(wnd);
 
-        boldGUIFont = ef::Win::FontH::create(ef::Win::FontH::getStockDefaultGui(), 0, ef::Win::FontH::bold);
-        underlineGUIFont = ef::Win::FontH::create(ef::Win::FontH::getStockDefaultGui(), 0, ef::Win::FontH::underline);
-
+        boldGUIFont = Util::Gfx::createDerivedFont(HFONT(GetStockObject(DEFAULT_GUI_FONT)), FW_BOLD);
         if (boldGUIFont) {
             // make status and its label bold
-            ef::Win::WndH status = GetDlgItem(wnd, IDC_STATUS);
-            status.setFont(boldGUIFont);
-            status.getWindow(GW_HWNDPREV).setFont(boldGUIFont);
+            HWND status = GetDlgItem(wnd, IDC_STATUS);
+            SendMessage(status, WM_SETFONT, WPARAM(boldGUIFont), false);
+            SendMessage(GetWindow(status, GW_HWNDPREV), WM_SETFONT, WPARAM(boldGUIFont), false);
         }
 
         // set dlg icons
@@ -83,68 +83,7 @@ public:
         SendMessage(wnd, WM_SETICON, ICON_BIG,   LPARAM(appIcon));
         SendMessage(wnd, WM_SETICON, ICON_SMALL, LPARAM(app.smIcon));
 
-        // set static icon if dlg was loaded from lang dll
-        if (app.resMod)
-            SendDlgItemMessage(wnd,IDC_LOGO,STM_SETIMAGE,IMAGE_ICON,LPARAM(appIcon));
-
-        struct Link {
-            int id;
-            LPCWSTR title;
-            LPCWSTR url;
-        };
-
-        Link links[] = {
-            { IDC_MAIL, L"efotinis@gmail.com", L"mailto:efotinis@gmail.com" },
-            { IDC_WEB, L"Deskpins webpage", L"http://efotinis.neocities.org/deskpins/index.html" }
-        };
-
-        ef::Win::FontH font = ef::Win::FontH::getStockDefaultGui();
-        BOOST_FOREACH(const Link& link, links) {
-            SetDlgItemText(wnd, link.id, link.title);
-            using ef::Win::CustomControls::LinkCtrl;
-            LinkCtrl* ctl = LinkCtrl::subclass(wnd, link.id);
-            ctl->setFonts(font, underlineGUIFont ? underlineGUIFont : font, font);
-            ctl->setColors(RGB(0,0,255), RGB(255,0,0), RGB(128,0,128));
-            ctl->setUrl(link.url);
-        }
-
-        //#ifdef TEST_OPTIONS_PAGE
-        //  SendMessage(wnd, WM_COMMAND, CM_OPTIONS, 0);
-        //#endif
-
         return true;
-    }
-
-
-    static void evTermDlg(HWND wnd, HFONT& boldGUIFont, HFONT& underlineGUIFont)
-    {
-        app.aboutDlg = 0;
-
-        if (boldGUIFont) {
-            DeleteObject(boldGUIFont);
-            boldGUIFont = 0;
-        }
-
-        if (underlineGUIFont) {
-            DeleteObject(underlineGUIFont);
-            underlineGUIFont = 0;
-        }
-
-    }
-
-
-    static void showSpecialInfo(HWND parent)
-    {
-    #if defined(_DEBUG)
-        LPCWSTR build = L"Debug";
-    #else
-        LPCWSTR build = L"Release";
-    #endif
-
-        // TODO: remove build info and add something more useful (e.g. "portable")
-        WCHAR buf[1000];
-        wsprintf(buf, L"Build: %s", build);
-        MessageBox(parent, buf, L"Info", MB_ICONINFORMATION);
     }
 
 };
@@ -164,7 +103,7 @@ LRESULT CALLBACK MainWnd::proc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     static UINT taskbarMsg = RegisterWindowMessage(L"TaskbarCreated");
     static PendingWindows pendWnds;
-    static WindowCreationMonitor* winCreMon;
+    static WindowCreationMonitor winCreMon;
     static Options* opt;
 
     switch (msg) {
@@ -175,10 +114,8 @@ LRESULT CALLBACK MainWnd::proc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
             opt = (Options*)cs->lpCreateParams;
 
             app.mainWnd = wnd;
-            //winCreMon = new HookDllWindowCreationMonitor();
-            winCreMon = new EventHookWindowCreationMonitor();
 
-            if (opt->autoPinOn && !winCreMon->init(wnd, App::WM_QUEUEWINDOW)) {
+            if (opt->autoPinOn && !winCreMon.init(wnd, App::WM_QUEUEWINDOW)) {
                 Util::App::error(wnd, Util::Res::ResStr(IDS_ERR_HOOKDLL));
                 opt->autoPinOn = false;
             }
@@ -212,9 +149,7 @@ LRESULT CALLBACK MainWnd::proc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
         case WM_DESTROY: {
             app.mainWnd = 0;
 
-            winCreMon->term();
-            delete winCreMon;
-            winCreMon = 0;
+            winCreMon.term();
 
             SendMessage(wnd, WM_COMMAND, CM_REMOVEPINS, 0);
 
@@ -232,7 +167,7 @@ LRESULT CALLBACK MainWnd::proc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
             evPinReq(wnd, int(wparam), int(lparam), opt);
             break;
         case WM_HOTKEY:
-            evHotkey(wnd, wparam, opt);
+            evHotkey(wnd, int(wparam), opt);
             break;
         case WM_TIMER:
             if (wparam == App::TIMERID_AUTOPIN) pendWnds.check(wnd, *opt);
@@ -254,25 +189,22 @@ LRESULT CALLBACK MainWnd::proc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
                     if (app.aboutDlg)
                         SetForegroundWindow(app.aboutDlg);
                     else {
-                        Util::Res::CreateLocalizedDialog(IDD_ABOUT, 0, AboutDlg::proc);
+                        CreateDialog(app.inst, MAKEINTRESOURCE(IDD_ABOUT), 0, AboutDlg::proc);
                         ShowWindow(app.aboutDlg, SW_SHOW);
                     }
                     break;
-                case CM_NEWPIN: 
+                case CM_NEWPIN:
                     cmNewPin(wnd);
                     break;
                 case CM_REMOVEPINS:
                     cmRemovePins(wnd);
                     break;
                 case CM_OPTIONS:
-                    cmOptions(wnd, *winCreMon, opt);
+                    cmOptions(wnd, winCreMon, opt);
                     break;
                 case CM_CLOSE:
                     DestroyWindow(wnd);
                     break;
-                    //case ID_TEST:
-                    //  CmTest(wnd);
-                    //  break;
                 default:
                     break;
             }
@@ -282,8 +214,6 @@ LRESULT CALLBACK MainWnd::proc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
                 opt->save();
             return 0;
         }
-        //case WM_SETTINGSCHANGE:
-        //case WM_DISPLAYCHANGE:
         case WM_DWMCOMPOSITIONCHANGED: {
             app.dwm.wmDwmCompositionChanged();
             return 0;
@@ -330,7 +260,7 @@ namespace
 {
     // Set and manage specific tray menu images.
     //
-    class TrayMenuDecorations : boost::noncopyable {
+    class TrayMenuDecorations : NonCopyable {
     public:
         TrayMenuDecorations(HMENU menu)
         {
@@ -338,7 +268,9 @@ namespace
             int h = GetSystemMetrics(SM_CYMENUCHECK);
 
             HDC    memDC  = CreateCompatibleDC(0);
-            HFONT  fnt    = ef::Win::FontH::create(L"Marlett", h, SYMBOL_CHARSET, ef::Win::FontH::noStyle);
+            HFONT  fnt    = CreateFont(h, 0, 0, 0, FW_NORMAL, false, false, false,
+                SYMBOL_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                DEFAULT_QUALITY, DEFAULT_PITCH, L"Marlett");
             HBRUSH bkBrush = HBRUSH(GetStockObject(WHITE_BRUSH));
 
             HGDIOBJ orgFnt = GetCurrentObject(memDC, OBJ_FONT);
@@ -363,7 +295,7 @@ namespace
     protected:
         HBITMAP bmpClose, bmpAbout;
 
-        HBITMAP makeBmp(HDC dc, int w, int h, HBRUSH bkBrush, HMENU menu, int idCmd, HFONT fnt, const TCHAR* c)
+        HBITMAP makeBmp(HDC dc, int w, int h, HBRUSH bkBrush, HMENU menu, int idCmd, HFONT fnt, LPCWSTR c)
         {
             HBITMAP retBmp = CreateBitmap(w, h, 1, 1, 0);
             if (retBmp) {
@@ -401,7 +333,7 @@ void MainWnd::evTrayIcon(HWND wnd, WPARAM id, LPARAM msg, Options* opt)
         }
         case WM_RBUTTONDOWN: {
             SetForegroundWindow(wnd);
-            HMENU dummy = Util::Res::LoadLocalizedMenu(IDM_TRAY);
+            HMENU dummy = LoadMenu(app.inst, MAKEINTRESOURCE(IDM_TRAY));
             HMENU menu = GetSubMenu(dummy,0);
             SetMenuDefaultItem(menu, CM_NEWPIN, false);
 
@@ -426,7 +358,7 @@ void MainWnd::cmNewPin(HWND wnd)
     if (app.layerWnd) return;
 
     // NOTE: fix for Win8+ (the top-left corner doesn't work)
-    const POINT layerWndPos = Util::Sys::isWin8orGreater() ? ef::Win::Point(100, 100) : ef::Win::Point(0, 0);
+    const POINT layerWndPos = Util::Sys::isWin8orGreater() ? POINT{100, 100} : POINT{0, 0};
     const SIZE layerWndSize = { 1, 1 };
 
     app.layerWnd = CreateWindowEx(
@@ -468,10 +400,10 @@ void MainWnd::cmOptions(HWND wnd, WindowCreationMonitor& winCreMon, Options* opt
     const int pageCnt = 4;
     PROPSHEETPAGE psp[pageCnt];
     PROPSHEETHEADER psh;
-    int dlgIds[pageCnt] = {
+    const int dlgIds[pageCnt] = {
         IDD_OPT_PINS, IDD_OPT_AUTOPIN, IDD_OPT_HOTKEYS, IDD_OPT_LANG
     };
-    DLGPROC dlgProcs[pageCnt] = { 
+    const DLGPROC dlgProcs[pageCnt] = {
         OptPins::dlgProc, OptAutoPin::dlgProc, OptHotKeys::dlgProc, OptLang::dlgProc
     };
 
@@ -482,47 +414,15 @@ void MainWnd::cmOptions(HWND wnd, WindowCreationMonitor& winCreMon, Options* opt
     OptionsPropSheetData data = { *opt, winCreMon };
     OptionsDlg::buildOptPropSheet(psh, psp, dlgIds, dlgProcs, pageCnt, 0, data, capStr);
 
-    // HACK: ensure tab pages creation, even if lang change is applied
-    //
-    // If there's a loaded res DLL, we reload it to increase its ref count
-    // and then free it again when PropertySheet() returns.
-    // This is in case the user changes the lang and hits Apply.
-    // That causes the current res mod to change, but the struct passed
-    // to PropertySheet() describes the prop pages using the initial
-    // res mod. Unless we do this ref-count trick, any pages that were
-    // not loaded before the lang change apply would fail to be created.
-    //
-    HINSTANCE curResMod = 0;
-    if (!opt->uiFile.empty()) {
-        WCHAR buf[MAX_PATH];
-        GetModuleFileName(app.resMod, buf, sizeof(buf));
-        curResMod = LoadLibrary(buf);
-    }
-
-    //#ifdef TEST_OPTIONS_PAGE
-    //  psh.nStartPage = TEST_OPTIONS_PAGE;
-    //#endif
-
     if (PropertySheet(&psh) == -1) {
-        std::wstring msg = Util::Res::ResStr(IDS_ERR_DLGCREATE);
+        std::wstring msg = LPCWSTR(Util::Res::ResStr(IDS_ERR_DLGCREATE));
         msg += L"\r\n";
-        msg += ef::Win::getLastErrorStr();
+        msg += Util::Sys::getLastErrorStr();
         Util::App::error(wnd, msg.c_str());
-    }
-
-    if (curResMod) {
-        FreeLibrary(curResMod);
-        curResMod = 0;
     }
 
     // reset tray tip, in case lang was changed
     app.trayIcon.setTip(app.trayIconTip().c_str());
 
     isOptDlgOn = false;
-
-    //#ifdef TEST_OPTIONS_PAGE
-    //  // PostMessage() stalls the debugger a bit...
-    //  //PostMessage(wnd, WM_COMMAND, CM_CLOSE, 0);
-    //  DestroyWindow(wnd);
-    //#endif
 }

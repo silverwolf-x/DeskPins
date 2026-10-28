@@ -6,9 +6,13 @@
 //
 class OptionsDlg {
 public:
-    static void buildOptPropSheet(PROPSHEETHEADER& psh, PROPSHEETPAGE psp[], 
-        int dlgIds[], DLGPROC dlgProcs[], int pageCnt, HWND parentWnd, 
-        OptionsPropSheetData& data, Util::Res::ResStr& capStr);
+    static void buildOptPropSheet(PROPSHEETHEADER& psh, PROPSHEETPAGE psp[],
+        const int dlgIds[], const DLGPROC dlgProcs[], int pageCnt, HWND parentWnd,
+        OptionsPropSheetData& data, const Util::Res::ResStr& capStr);
+
+    // Common property page notifications (PSN_SETACTIVE, PSN_KILLACTIVE).
+    // Returns true if handled.
+    static bool handlePageNotify(HWND page, const NMHDR& nmhdr, bool (*validate)(HWND));
 
 private:
     static WNDPROC orgOptPSProc;

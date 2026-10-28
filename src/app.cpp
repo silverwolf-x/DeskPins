@@ -10,49 +10,29 @@
 LPCWSTR App::APPNAME = L"DeskPins";
 
 
-// Load a resource dll and store it in 'resMod'.
-// The previous dll, if any, is released.
-// On error (or if file is nul), 'resMod' is set to 0 
-// to use the built-in EXE resources.
-// Returns success.
-bool App::loadResMod(const std::wstring& file, HWND msgParent)
+App::~App()
 {
-    // unload current
-    freeResMod();
-
-    // no res module -> use .exe resources
-    if (file.empty())
-        return true;
-
-    // try to load module if it's a DLL
-    std::wstring s = ef::dirSpec(ef::Win::getModulePath(inst));
-    if (!s.empty()) {
-#ifdef _DEBUG
-        s += L"..\\Localization\\";
-#endif
-        s += file;
-        resMod = LoadLibrary(s.c_str());
-    }
-
-    // display warning if failed
-    if (!resMod) {
-        WCHAR buf[MAX_PATH + 100];
-        LPCWSTR msg = L"Could not load language file: %s\r\n"
-            L"Reverting to English interface.";
-        wsprintf(buf, msg, file.c_str());
-        Util::App::error(msgParent, buf);
-    }
-
-    return resMod != 0;
+    if (smIcon) DestroyIcon(smIcon);
+    if (smClrIcon) DestroyIcon(smClrIcon);
+    if (instMutex) CloseHandle(instMutex);
 }
 
 
-void App::freeResMod()
+// Select the language used for loading resources (dialogs, menus, strings).
+// All translations are built into the exe; an empty locale name
+// follows the user's Windows display language.
+void App::setUILanguage(const std::wstring& locale)
 {
-    if (resMod) {
-        FreeLibrary(resMod);
-        resMod = 0;
+    if (locale.empty()) {
+        SetThreadPreferredUILanguages(0, 0, 0);
+        SetThreadUILanguage(GetUserDefaultUILanguage());
+        return;
     }
+
+    const std::wstring list = locale + L'\0';   // double-NUL terminated
+    SetThreadPreferredUILanguages(MUI_LANGUAGE_NAME, list.c_str(), 0);
+    if (LANGID id = LANGIDFROMLCID(LocaleNameToLCID(locale.c_str(), 0)))
+        SetThreadUILanguage(id);
 }
 
 
@@ -60,7 +40,7 @@ bool App::initComctl()
 {
     INITCOMMONCONTROLSEX iccx;
     iccx.dwSize = sizeof(iccx);
-    iccx.dwICC = ICC_WIN95_CLASSES;
+    iccx.dwICC = ICC_WIN95_CLASSES | ICC_LINK_CLASS;
     bool ret = !!InitCommonControlsEx(&iccx);
     if (!ret)
         Util::App::error(0, Util::Res::ResStr(IDS_ERR_CCINIT));
@@ -72,21 +52,23 @@ bool App::initComctl()
 // If automatic detection fails, ask the user.
 bool App::chkPrevInst()
 {
-    if (prevInst.isRunning()) {
+    instMutex = CreateMutex(0, false, L"EFDeskPinsRunning");
+    if (!instMutex)
+        return MessageBox(0, Util::Res::ResStr(IDS_ERR_MUTEXFAILCONFIRM), APPNAME, MB_ICONEXCLAMATION | MB_YESNO) != IDNO;
+
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
         MessageBox(0, Util::Res::ResStr(IDS_ERR_ALREADYRUNNING), APPNAME, MB_ICONINFORMATION);
         return false;
     }
-    else if (!prevInst.isRunning())
-        return true;
-    else
-        return MessageBox(0, Util::Res::ResStr(IDS_ERR_MUTEXFAILCONFIRM), APPNAME, MB_ICONEXCLAMATION | MB_YESNO) != IDNO;
+
+    return true;
 }
 
 
 bool App::regWndCls()
 {
-    return MainWnd::registerClass() && 
-           PinWnd::registerClass() && 
+    return MainWnd::registerClass() &&
+           PinWnd::registerClass() &&
            PinLayerWnd::registerClass();
 }
 
@@ -94,7 +76,7 @@ bool App::regWndCls()
 bool App::createMainWnd(Options& opt)
 {
     // app.mainWnd set in WM_CREATE
-    CreateWindow(MainWnd::className, App::APPNAME, 
+    CreateWindow(MainWnd::className, App::APPNAME,
         WS_POPUP, 0,0,0,0, 0, 0, app.inst, &opt);
 
     return app.mainWnd != 0;
@@ -105,24 +87,23 @@ bool App::createMainWnd(Options& opt)
 // On failure, we get the original icon.
 void App::createSmClrIcon(COLORREF clr)
 {
-    if (smClrIcon) DeleteObject(smClrIcon);
-    smClrIcon = HICON(LoadImage(app.inst, MAKEINTRESOURCE(IDI_APP), 
+    if (smClrIcon) DestroyIcon(smClrIcon);
+    smClrIcon = HICON(LoadImage(app.inst, MAKEINTRESOURCE(IDI_APP),
         IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR));
 
     ICONINFO ii;
     if (GetIconInfo(smClrIcon, &ii)) {
         // (assuming non-monochrome)
-        COLORREF clrMap[][2] = {
-            { Util::Clr::red, clr }, 
+        const COLORREF clrMap[][2] = {
+            { Util::Clr::red, clr },
             { Util::Clr::maroon, Util::Clr::dark(clr) }
         };
-        Util::Gfx::remapBmpColors(ii.hbmColor, clrMap, ARRSIZE(clrMap));
+        Util::Gfx::remapBmpColors(ii.hbmColor, clrMap, ARRAYSIZE(clrMap));
         HICON newIcon = CreateIconIndirect(&ii);
         if (newIcon) {
             DestroyIcon(smClrIcon);
             smClrIcon = newIcon;
         }
-        // (assuming non-monochrome)
         // destroy bmps returned from GetIconInfo()
         DeleteObject(ii.hbmColor);
         DeleteObject(ii.hbmMask);
@@ -132,7 +113,6 @@ void App::createSmClrIcon(COLORREF clr)
 
 std::wstring App::trayIconTip()
 {
-    TCHAR s[100];
-    wsprintf(s, L"%s - %s: %d", APPNAME, Util::Res::ResStr(IDS_TRAYTIP, 50), pinsUsed);
-    return s;
+    return std::wstring(APPNAME) + L" - " +
+        LPCWSTR(Util::Res::ResStr(IDS_TRAYTIP, 50)) + L": " + std::to_wstring(pinsUsed);
 }

@@ -6,7 +6,7 @@
 class OptPins
 {
 public:
-    static BOOL CALLBACK dlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam);
+    static INT_PTR CALLBACK dlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
 protected:
     static bool validate(HWND wnd);
@@ -22,7 +22,6 @@ protected:
 
     static bool evInitDialog(HWND wnd, HWND focus, LPARAM lparam);
     static void evTermDialog(HWND wnd);
-    static bool evDrawItem(HWND wnd, UINT id, DRAWITEMSTRUCT* dis);
 
     static void cmPinClr(HWND wnd);
 };

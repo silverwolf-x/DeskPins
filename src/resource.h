@@ -2,7 +2,6 @@
 // Microsoft Visual C++ generated include file.
 // Used by deskpins.rc
 //
-#define VERSIONINFO_1                   1
 #define IDI_APP                         1
 #define IDC_PLACEPIN                    1
 #define IDM_TRAY                        1
@@ -14,7 +13,7 @@
 #define IDS_OPTIONSTITLE                6
 #define IDS_WRN_UIRANGE                 7
 #define IDS_NEWRULEDESCR                8
-#define IDS_LANG                        9
+#define IDS_LANG_AUTO                   9
 #define IDC_BULLSEYE                    10
 #define IDS_ERR_HOTKEYSSET              10
 #define IDS_ERR_DLGCREATE               11
@@ -33,6 +32,9 @@
 #define IDS_ERR_CCINIT                  24
 #define IDS_ERR_HOOKDLL                 25
 #define IDS_TRAYTIP                     26
+#define IDS_TIP_TTLPICK                 27
+#define IDS_TIP_CLSPICK                 28
+#define IDS_RULES_COLUMN                29
 #define IDC_HOT_PINMODE                 101
 #define IDC_MAIL                        102
 #define IDC_PIN_COLOR                   103
@@ -76,13 +78,3 @@
 #define CM_ABOUT                        11845
 #define CM_OPTIONS                      11846
 
-// Next default values for new objects
-// 
-#ifdef APSTUDIO_INVOKED
-#ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        122
-#define _APS_NEXT_COMMAND_VALUE         40002
-#define _APS_NEXT_CONTROL_VALUE         1056
-#define _APS_NEXT_SYMED_VALUE           101
-#endif
-#endif

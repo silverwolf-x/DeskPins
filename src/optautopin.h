@@ -6,7 +6,7 @@
 class OptAutoPin
 {
 public:
-    static BOOL CALLBACK dlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam);
+    static INT_PTR CALLBACK dlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
 protected:
     static void apply(HWND wnd, WindowCreationMonitor& winCreMon);

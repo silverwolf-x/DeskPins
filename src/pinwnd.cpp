@@ -35,7 +35,7 @@ LRESULT CALLBACK PinWnd::proc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
         switch (msg) {
             case WM_CREATE:         return evCreate(wnd, *pd);
             case WM_DESTROY:        return evDestroy(wnd, *pd), 0;
-            case WM_TIMER:          return evTimer(wnd, *pd, wparam), 0;
+            case WM_TIMER:          return evTimer(wnd, *pd, UINT(wparam)), 0;
             case WM_PAINT:          return evPaint(wnd, *pd), 0;
             case WM_LBUTTONDOWN:    return evLClick(wnd, *pd), 0;
             case App::WM_PIN_RESETTIMER:   return evPinResetTimer(wnd, *pd, int(wparam)), 0;
@@ -86,13 +86,13 @@ void PinWnd::evDestroy(HWND wnd, Data& pd)
 class ThreadWnds {
 public:
     ThreadWnds(HWND wnd) : appWnd(wnd) {}
-    int count() const { return wndList.size(); }
+    int count() const { return int(wndList.size()); }
     HWND operator[](int n) const { return wndList[n]; }
 
     bool collect()
     {
         DWORD threadId = GetWindowThreadProcessId(appWnd, 0);
-        return !!EnumThreadWindows(threadId, (WNDENUMPROC)enumProc, LPARAM(this));
+        return !!EnumThreadWindows(threadId, enumProc, LPARAM(this));
     }
 
 protected:
@@ -186,10 +186,9 @@ void PinWnd::evTimer(HWND wnd, Data& pd, UINT id)
         && !selectProxy(wnd, pd))
         return;
 
-    // bugfix: disabled proxy mode check so that FixVisible()
-    // is called even on normal apps that hide the window on minimize
-    // (just like our About dlg)
-    if (/*pd->proxyMode &&*/ !fixVisible(wnd, pd))
+    // called even when not in proxy mode, for normal apps
+    // that hide the window on minimize (just like our About dlg)
+    if (!fixVisible(wnd, pd))
         return;
 
     if (pd.proxyMode && !IsWindowEnabled(pd.topMostWnd))
@@ -241,7 +240,7 @@ bool PinWnd::evPinAssignWnd(HWND wnd, Data& pd, HWND target, int pollRate)
         // docs say not to set GWL_HWNDPARENT, but it works nevertheless
         // (SetParent() only works with windows of the same process)
         SetLastError(0);
-        if (!SetWindowLong(wnd, GWL_HWNDPARENT, LONG(pd.getPinOwner())) && GetLastError())
+        if (!SetWindowLongPtr(wnd, GWLP_HWNDPARENT, LONG_PTR(pd.getPinOwner())) && GetLastError())
             Util::App::error(wnd, Util::Res::ResStr(IDS_ERR_SETPINPARENTFAIL));
     }
 
@@ -314,7 +313,7 @@ bool PinWnd::fixVisible(HWND wnd, const Data& pd)
 // patch for VCL apps (clearing of WS_EX_TOPMOST bit)
 void PinWnd::fixTopStyle(HWND wnd, const Data& pd)
 {
-    if (!(ef::Win::WndH(pd.topMostWnd).getExStyle() & WS_EX_TOPMOST))
+    if (!Util::Wnd::isTopMost(pd.topMostWnd))
         SetWindowPos(pd.topMostWnd, HWND_TOPMOST, 0,0,0,0, 
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
@@ -330,34 +329,23 @@ void PinWnd::placeOnCaption(HWND wnd, const Data& pd)
 
     // Calc the number of caption buttons
     int btnCnt = 0;
-    LONG style   = ef::Win::WndH(pinOwner).getStyle();
-    LONG exStyle = ef::Win::WndH(pinOwner).getExStyle();
-    LONG minMaxMask = WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
-    bool hasMinOrMax  = (style & minMaxMask) != 0;
-    bool hasMinAndMax = (style & minMaxMask) == minMaxMask;
-    bool hasClose = (style & WS_SYSMENU) != 0;
-    bool hasHelp  = (exStyle & WS_EX_CONTEXTHELP) != 0;
+    LONG_PTR style   = Util::Wnd::getStyle(pinOwner);
+    LONG_PTR exStyle = Util::Wnd::getExStyle(pinOwner);
+    bool hasMinOrMax = (style & (WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) != 0;
+    bool hasHelp     = (exStyle & WS_EX_CONTEXTHELP) != 0;
     if (style & WS_SYSMENU) {  // other buttons appear only if this is set
         ++btnCnt;
         if (hasMinOrMax)
             btnCnt += 2;
-        // Win XP/2000 erroneously allow a non-functional help button 
-        // when either (not both!) of the min/max buttons are enabled
-        if (hasHelp && (!hasMinOrMax || (ef::Win::OsVer().major() == 5 && !hasMinAndMax)))
+        else if (hasHelp)
             ++btnCnt;
     }
 
-    RECT pin, pinned;
-    GetWindowRect(wnd, &pin);
+    RECT pinned;
     GetWindowRect(pinOwner, &pinned);
     int x = pinned.right - (btnCnt*GetSystemMetrics(SM_CXSIZE) + app.pinShape.getW() + 10); // add a small padding
-    SetWindowPos(wnd, 0, x, pinned.top+3, 0, 0, 
+    SetWindowPos(wnd, 0, x, pinned.top+3, 0, 0,
         SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
-
-    // reveal VCL app wnd :)
-    //if (rcPinned.top >= rcPinned.bottom || rcPinned.left >= rcPinned.right)
-    //  MoveWindow(pd.pinnedWnd, rcPinned.left, rcPinned.top, 200, 100, true);
-
 }
 
 
@@ -367,7 +355,7 @@ bool PinWnd::selectProxy(HWND wnd, const Data& pd)
     if (!IsWindow(appWnd)) return false;
 
     DWORD thread = GetWindowThreadProcessId(appWnd, 0);
-    return EnumThreadWindows(thread, (WNDENUMPROC)enumThreadWndProc, 
+    return EnumThreadWindows(thread, enumThreadWndProc,
         LPARAM(wnd)) && pd.getPinOwner();
 }
 
@@ -382,7 +370,7 @@ BOOL CALLBACK PinWnd::enumThreadWndProc(HWND wnd, LPARAM param)
     if (GetWindow(wnd, GW_OWNER) == pd->topMostWnd) {
         if (IsWindowVisible(wnd) && !IsIconic(wnd) && !Util::Wnd::isWndRectEmpty(wnd)) {
             pd->proxyWnd = wnd;
-            SetWindowLong(pin, GWL_HWNDPARENT, LONG(wnd));
+            SetWindowLongPtr(pin, GWLP_HWNDPARENT, LONG_PTR(wnd));
             // we must also move it in front of the new owner
             // otherwise the wnd mgr will not do it until we select the new owner
             SetWindowPos(wnd, pin, 0,0,0,0, 

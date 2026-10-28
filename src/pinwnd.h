@@ -19,7 +19,7 @@ protected:
         static Data* create(HWND pin, HWND callback) {
             Data* p = new Data(callback);
             SetLastError(0);
-            if (!SetWindowLong(pin, 0, LONG(p)) && GetLastError()) {
+            if (!SetWindowLongPtr(pin, 0, LONG_PTR(p)) && GetLastError()) {
                 delete p;
                 p = 0;
             }
@@ -27,7 +27,7 @@ protected:
         }
         // Get object or 0 on error.
         static Data* get(HWND pin) {
-            return reinterpret_cast<Data*>(GetWindowLong(pin, 0));
+            return reinterpret_cast<Data*>(GetWindowLongPtr(pin, 0));
         }
         // Detach from pin wnd and delete.
         static void destroy(HWND pin) {
@@ -35,7 +35,7 @@ protected:
             if (!p)
                 return;
             SetLastError(0);
-            if (!SetWindowLong(pin, 0, 0) && GetLastError())
+            if (!SetWindowLongPtr(pin, 0, 0) && GetLastError())
                 return;
             delete p;
         }

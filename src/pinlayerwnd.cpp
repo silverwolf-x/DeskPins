@@ -49,7 +49,7 @@ LRESULT CALLBACK PinLayerWnd::proc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lpa
         return false;
 
     case WM_LBUTTONDOWN:
-        evLButtonDown(wnd, wparam, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+        evLButtonDown(wnd, UINT(wparam), GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
         return false;
 
     case WM_LBUTTONUP:

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "options.h"
+#include "optionsdlg.h"
 #include "util.h"
 #include "opthotkeys.h"
 #include "resource.h"
@@ -24,11 +25,10 @@ bool OptHotKeys::evInitDialog(HWND wnd, HWND focus, LPARAM param)
 
     // save the data ptr
     PROPSHEETPAGE& psp = *reinterpret_cast<PROPSHEETPAGE*>(param);
-    Options& opt = reinterpret_cast<OptionsPropSheetData*>(psp.lParam)->opt;
-    SetWindowLong(wnd, DWL_USER, psp.lParam);
+    SetWindowLongPtr(wnd, DWLP_USER, psp.lParam);
+    Options& opt = OptionsPropSheetData::get(wnd).opt;
 
-
-    CheckDlgButton(wnd, IDC_HOTKEYS_ON, opt.hotkeysOn);
+    CheckDlgButton(wnd, IDC_HOTKEYS_ON, opt.hotkeysOn ? BST_CHECKED : BST_UNCHECKED);
     cmHotkeysOn(wnd);
 
     opt.hotEnterPin.setUI(wnd, IDC_HOT_PINMODE);
@@ -44,8 +44,7 @@ bool OptHotKeys::validate(HWND wnd)
 }
 
 
-bool OptHotKeys::changeHotkey(HWND wnd, 
-    const HotKey& newHotkey, bool newState, 
+bool OptHotKeys::changeHotkey(const HotKey& newHotkey, bool newState,
     const HotKey& oldHotkey, bool oldState)
 {
     // get old & new state to figure out transition
@@ -71,7 +70,7 @@ bool OptHotKeys::changeHotkey(HWND wnd,
 
 void OptHotKeys::apply(HWND wnd)
 {
-    Options& opt = reinterpret_cast<OptionsPropSheetData*>(GetWindowLong(wnd, DWL_USER))->opt;
+    Options& opt = OptionsPropSheetData::get(wnd).opt;
 
     bool hotkeysOn = IsDlgButtonChecked(wnd, IDC_HOTKEYS_ON) == BST_CHECKED;
 
@@ -85,10 +84,8 @@ void OptHotKeys::apply(HWND wnd)
     // Get separate success flags to avoid short-circuiting
     // (and set as many keys as possible)
     bool allKeysSet = true;
-    allKeysSet &= changeHotkey(
-        wnd, enterKey, hotkeysOn, opt.hotEnterPin, opt.hotkeysOn);
-    allKeysSet &= changeHotkey(
-        wnd, toggleKey, hotkeysOn, opt.hotTogglePin, opt.hotkeysOn);
+    allKeysSet &= changeHotkey(enterKey, hotkeysOn, opt.hotEnterPin, opt.hotkeysOn);
+    allKeysSet &= changeHotkey(toggleKey, hotkeysOn, opt.hotTogglePin, opt.hotkeysOn);
 
     opt.hotkeysOn = hotkeysOn;
     opt.hotEnterPin = enterKey;
@@ -99,23 +96,15 @@ void OptHotKeys::apply(HWND wnd)
 }
 
 
-BOOL CALLBACK OptHotKeys::dlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
+INT_PTR CALLBACK OptHotKeys::dlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     switch (msg) {
         case WM_INITDIALOG:  return evInitDialog(wnd, HWND(wparam), lparam);
         case WM_NOTIFY: {
-            NMHDR nmhdr = *reinterpret_cast<NMHDR*>(lparam);
+            const NMHDR& nmhdr = *reinterpret_cast<NMHDR*>(lparam);
+            if (OptionsDlg::handlePageNotify(wnd, nmhdr, validate))
+                return true;
             switch (nmhdr.code) {
-                case PSN_SETACTIVE: {
-                    HWND tab = PropSheet_GetTabControl(nmhdr.hwndFrom);
-                    app.optionPage = SendMessage(tab, TCM_GETCURSEL, 0, 0);
-                    SetWindowLong(wnd, DWL_MSGRESULT, 0);
-                    return true;
-                }
-                case PSN_KILLACTIVE: {
-                    SetWindowLong(wnd, DWL_MSGRESULT, !validate(wnd));
-                    return true;
-                }
                 case PSN_APPLY: {
                     apply(wnd);
                     return true;

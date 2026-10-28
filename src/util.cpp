@@ -4,6 +4,34 @@
 #include "resource.h"
 
 
+LONG_PTR Util::Wnd::getStyle(HWND wnd)
+{
+    return GetWindowLongPtr(wnd, GWL_STYLE);
+}
+
+
+LONG_PTR Util::Wnd::getExStyle(HWND wnd)
+{
+    return GetWindowLongPtr(wnd, GWL_EXSTYLE);
+}
+
+
+std::wstring Util::Wnd::getText(HWND wnd)
+{
+    std::wstring s(GetWindowTextLength(wnd) + 1, L'\0');
+    s.resize(GetWindowText(wnd, &s[0], int(s.size())));
+    return s;
+}
+
+
+std::wstring Util::Wnd::getClassName(HWND wnd)
+{
+    WCHAR buf[256];   // max class name length
+    int n = GetClassName(wnd, buf, ARRAYSIZE(buf));
+    return std::wstring(buf, n);
+}
+
+
 bool Util::Wnd::isWndRectEmpty(HWND wnd)
 {
     RECT rc;
@@ -13,7 +41,7 @@ bool Util::Wnd::isWndRectEmpty(HWND wnd)
 
 bool Util::Wnd::isChild(HWND wnd)
 {
-    return (ef::Win::WndH(wnd).getStyle() & WS_CHILD) != 0;
+    return (getStyle(wnd) & WS_CHILD) != 0;
 }
 
 
@@ -26,37 +54,17 @@ HWND Util::Wnd::getNonChildParent(HWND wnd)
 }
 
 
-HWND Util::Wnd::getTopParent(HWND wnd /*, bool mustBeVisible*/)
+// Go up the window chain to find the ultimate top-level wnd:
+// for WS_CHILD wnds use GetParent(), for the rest use GetWindow(GW_OWNER).
+// Invisible parents (e.g. VCL's TApplication) are handled by the pin proxy mechanism.
+HWND Util::Wnd::getTopParent(HWND wnd)
 {
-    // ------------------------------------------------------
-    // NOTE: 'mustBeVisible' is not used currently
-    // ------------------------------------------------------
-    // By setting the 'mustBeVisible' flag,
-    // more constraints are applied to the ultimate parent searching:
-    //
-    // #1: Stop when parent is invisible (e.g. the shell's Display Properties
-    //     which has a hidden parent from RunDll)
-    // #2: Stop when parent rect is null. This is the case with VCL apps
-    //     where a parent window (TApplication class) is created as a proxy
-    //     for app functionality (it has WS_VISIBLE, but the width/height are 0)
-    //
-    // The pinning engine handles invisible wnds (via the proxy mechanism).
-    // 'mustBeVisible' is used mostly for user interaction
-    // (e.g. peeking a window's attributes)
-    // ------------------------------------------------------
-
-    // go up the window chain to find the ultimate top-level wnd
-    // for WS_CHILD wnds use GetParent()
-    // for the rest use GetWindow(GW_OWNER)
-    //
     for (;;) {
         HWND parent = isChild(wnd)
             ? GetParent(wnd)
             : GetWindow(wnd, GW_OWNER);
 
         if (!parent || parent == wnd) break;
-        //if (mustBeVisible && !IsWindowVisible(parent) || IsWndRectEmpty(parent))
-        //  break;
         wnd = parent;
     }
 
@@ -65,41 +73,41 @@ HWND Util::Wnd::getTopParent(HWND wnd /*, bool mustBeVisible*/)
 
 
 bool Util::Wnd::isProgManWnd(HWND wnd)
-{ 
-    return Util::Text::strimatch(ef::Win::WndH(wnd).getClassName().c_str(), L"ProgMan")
-        && Util::Text::strimatch(ef::Win::WndH(wnd).getText().c_str(), L"Program Manager");
+{
+    return Util::Text::strimatch(getClassName(wnd).c_str(), L"ProgMan")
+        && Util::Text::strimatch(getText(wnd).c_str(), L"Program Manager");
 }
 
 
 bool Util::Wnd::isTaskBar(HWND wnd)
 {
-    return Util::Text::strimatch(ef::Win::WndH(wnd).getClassName().c_str(), L"Shell_TrayWnd");
+    return Util::Text::strimatch(getClassName(wnd).c_str(), L"Shell_TrayWnd");
 }
 
 
 bool Util::Wnd::isTopMost(HWND wnd)
 {
-    return (ef::Win::WndH(wnd).getExStyle() & WS_EX_TOPMOST) != 0;
+    return (getExStyle(wnd) & WS_EX_TOPMOST) != 0;
 }
 
 
 bool Util::Wnd::isVCLAppWnd(HWND wnd)
 {
-    return Util::Text::strimatch(L"TApplication", ef::Win::WndH(wnd).getClassName().c_str()) 
+    return Util::Text::strimatch(L"TApplication", getClassName(wnd).c_str())
         && Util::Wnd::isWndRectEmpty(wnd);
 }
 
 
 void Util::App::error(HWND wnd, LPCWSTR s)
 {
-    Util::Res::ResStr caption(IDS_ERRBOXTTITLE, 50, reinterpret_cast<DWORD>(::App::APPNAME));
+    Util::Res::ResStr caption(IDS_ERRBOXTTITLE, 50, DWORD_PTR(::App::APPNAME));
     MessageBox(wnd, s, caption, MB_ICONSTOP | MB_TOPMOST);
 }
 
 
 void Util::App::warning(HWND wnd, LPCWSTR s)
 {
-    Util::Res::ResStr caption(IDS_WRNBOXTTITLE, 50, reinterpret_cast<DWORD>(::App::APPNAME));
+    Util::Res::ResStr caption(IDS_WRNBOXTTITLE, 50, DWORD_PTR(::App::APPNAME));
     MessageBox(wnd, s, caption, MB_ICONWARNING | MB_TOPMOST);
 }
 
@@ -114,29 +122,27 @@ std::wstring Util::App::getHelpFileDescr(const std::wstring& path, const std::ws
 
     const DWORD CHM_MARKER_SIG = 0xefda7a00;  // from chmmark.py
     std::wstring ret;
+    HANDLE file = CreateFile((path + name).c_str(), GENERIC_READ, FILE_SHARE_READ,
+        0, OPEN_EXISTING, 0, 0);
+    if (file == INVALID_HANDLE_VALUE)
+        return ret;
+
     DWORD sig, len;
-    ef::Win::AutoFileH file = ef::Win::FileH::create(path + name, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
-    if (file != INVALID_HANDLE_VALUE &&
-        file.setPosFromEnd32(0) &&
-        Util::Sys::readFileBack(file, &sig, sizeof(sig)) && 
+    if (SetFilePointer(file, 0, 0, FILE_END) != INVALID_SET_FILE_POINTER &&
+        Util::Sys::readFileBack(file, &sig, sizeof(sig)) &&
         sig == CHM_MARKER_SIG &&
-        Util::Sys::readFileBack(file, &len, sizeof(len)))
+        Util::Sys::readFileBack(file, &len, sizeof(len)) &&
+        len > 0 && len < 1024)
     {
-        boost::scoped_array<char> buf(new char[len]);
-        if (Util::Sys::readFileBack(file, buf.get(), len)) {
-            boost::scoped_array<WCHAR> wbuf(new WCHAR[len]);
-            if (MultiByteToWideChar(CP_THREAD_ACP, 0, buf.get(), len, wbuf.get(), len))
-                ret.assign(wbuf.get(), len);
+        std::vector<char> buf(len);
+        if (Util::Sys::readFileBack(file, &buf[0], len)) {
+            std::vector<WCHAR> wbuf(len);
+            int n = MultiByteToWideChar(CP_THREAD_ACP, 0, &buf[0], len, &wbuf[0], len);
+            ret.assign(&wbuf[0], n);
         }
     }
+    CloseHandle(file);
     return ret;
-}
-
-
-bool Util::Sys::getScrSize(SIZE& sz)
-{
-    return ((sz.cx = GetSystemMetrics(SM_CXSCREEN)) != 0 &&
-        (sz.cy = GetSystemMetrics(SM_CYSCREEN)) != 0);
 }
 
 
@@ -155,8 +161,6 @@ void Util::App::pinWindow(HWND wnd, HWND hitWnd, int trackRate, bool silent)
     else if (Util::Wnd::isTopMost(hitWnd))
         wrn = IDS_ERR_ALREADYTOPMOST;
     // hidden wnds are handled by the proxy mechanism
-    //else if (!IsWindowVisible(hitWnd))
-    //  Error(wnd, "Cannot pin a hidden window");
     else {
         // create a pin wnd
         HWND pin = CreateWindowEx(
@@ -185,7 +189,7 @@ void Util::App::pinWindow(HWND wnd, HWND hitWnd, int trackRate, bool silent)
 }
 
 
-// If the specified window (top parent) is pinned, 
+// If the specified window (top parent) is pinned,
 // return the pin wnd's handle; otherwise return 0.
 //
 HWND Util::App::hasPin(HWND wnd)
@@ -193,7 +197,6 @@ HWND Util::App::hasPin(HWND wnd)
     // enumerate all pin windows
     HWND pin = 0;
     while ((pin = FindWindowEx(0, pin, PinWnd::className, 0)) != 0)
-        //if (GetParent(pin) == wnd)
         if (HWND(SendMessage(pin, ::App::WM_PIN_GETPINNEDWND, 0, 0)) == wnd)
             return pin;
 
@@ -278,90 +281,16 @@ void Util::App::markWnd(HWND wnd, bool mode)
 }
 
 
-std::wstring Util::App::getLangFileDescr(const std::wstring& path, const std::wstring& file)
+void Util::Res::ResStr::init(UINT id, size_t bufLen, DWORD_PTR* params)
 {
-    HINSTANCE inst = file.empty() ? app.inst : LoadLibrary((path+file).c_str());
-    WCHAR buf[100];
-    if (!inst || !LoadString(inst, IDS_LANG, buf, sizeof(buf)))
-        *buf = '\0';
-    if (!file.empty() && inst)   // release inst if we had to load it
-        FreeLibrary(inst);
-    return buf;
-}
-
-
-HMENU Util::Res::LoadLocalizedMenu(LPCTSTR lpMenuName)
-{
-    if (app.resMod) {
-        HMENU ret = LoadMenu(app.resMod, lpMenuName);
-        if (ret)
-            return ret;
-    }
-    return LoadMenu(app.inst, lpMenuName);
-}
-
-
-HMENU Util::Res::LoadLocalizedMenu(WORD id)
-{
-    return Util::Res::LoadLocalizedMenu(MAKEINTRESOURCE(id));
-}
-
-
-namespace {
-    bool isLastErrResNotFound()
-    {
-        DWORD e = GetLastError();
-        return e == ERROR_RESOURCE_DATA_NOT_FOUND ||
-            e == ERROR_RESOURCE_TYPE_NOT_FOUND ||
-            e == ERROR_RESOURCE_NAME_NOT_FOUND ||
-            e == ERROR_RESOURCE_LANG_NOT_FOUND;
-    }
-}
-
-
-int Util::Res::LocalizedDialogBoxParam(LPCTSTR lpTemplate, HWND hParent, DLGPROC lpDialogFunc, LPARAM dwInit)
-{
-    if (app.resMod) {
-        int ret = DialogBoxParam(app.resMod, lpTemplate, hParent, lpDialogFunc, dwInit);
-        if (ret != -1 || !isLastErrResNotFound())
-            return ret;
-    }
-    return DialogBoxParam(app.inst, lpTemplate, hParent, lpDialogFunc, dwInit);
-}
-
-
-int Util::Res::LocalizedDialogBoxParam(WORD id, HWND hParent, DLGPROC lpDialogFunc, LPARAM dwInit)
-{
-    return Util::Res::LocalizedDialogBoxParam(MAKEINTRESOURCE(id), hParent, lpDialogFunc, dwInit);
-}
-
-
-HWND Util::Res::CreateLocalizedDialog(LPCTSTR lpTemplate, HWND hParent, DLGPROC lpDialogFunc)
-{
-    if (app.resMod) {
-        HWND ret = CreateDialog(app.resMod, lpTemplate, hParent, lpDialogFunc);
-        if (ret || !isLastErrResNotFound())
-            return ret;
-    }
-    return CreateDialog(app.inst, lpTemplate, hParent, lpDialogFunc);
-}
-
-
-HWND Util::Res::CreateLocalizedDialog(WORD id, HWND hParent, DLGPROC lpDialogFunc)
-{
-    return Util::Res::CreateLocalizedDialog(MAKEINTRESOURCE(id), hParent, lpDialogFunc);
-}
-
-
-void Util::Res::ResStr::init(UINT id, size_t bufLen, DWORD_PTR* params) {
-    str = new WCHAR[bufLen];
-    if (!app.resMod || !LoadString(app.resMod, id, str, bufLen))
-        LoadString(app.inst, id, str, bufLen);
+    std::vector<WCHAR> buf(bufLen, L'\0');
+    LoadString(app.inst, id, &buf[0], int(bufLen));
+    str = &buf[0];
     if (params) {
         DWORD flags = FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_ARGUMENT_ARRAY;
         va_list* va = reinterpret_cast<va_list*>(params);
-        if (!FormatMessage(flags, std::wstring(str).c_str(), 0, 0, str, bufLen, va))
-            *str = 0;
+        DWORD n = FormatMessage(flags, str.c_str(), 0, 0, &buf[0], DWORD(bufLen), va);
+        str.assign(&buf[0], n);
     }
 }
 
@@ -375,7 +304,7 @@ bool Util::Gfx::rectContains(const RECT& rc1, const RECT& rc2)
 }
 
 
-// enable/disable all ctrls that lie inside the specified ctrl 
+// enable/disable all ctrls that lie inside the specified ctrl
 // (usually a group, or maybe a tab, etc)
 void Util::Wnd::enableGroup(HWND wnd, int id, bool mode)
 {
@@ -383,12 +312,12 @@ void Util::Wnd::enableGroup(HWND wnd, int id, bool mode)
     RECT rc;
     GetWindowRect(container, &rc);
 
-    // deflate a bit (4 DLUs) to be on the safe side (do we need this?)
+    // deflate a bit (4 DLUs) to be on the safe side
     RECT rc2 = {0, 0, 4, 4};
     MapDialogRect(wnd, &rc2);
     InflateRect(&rc, rc2.left-rc2.right, rc2.top-rc2.bottom);
 
-    for (HWND child = GetWindow(wnd, GW_CHILD); 
+    for (HWND child = GetWindow(wnd, GW_CHILD);
         child; child = GetWindow(child, GW_HWNDNEXT)) {
             if (child == container)
                 continue;
@@ -400,11 +329,18 @@ void Util::Wnd::enableGroup(HWND wnd, int id, bool mode)
 }
 
 
-std::vector<std::wstring> Util::Sys::getFiles(std::wstring mask)
+std::vector<std::wstring> Util::Sys::getFiles(const std::wstring& mask)
 {
     std::vector<std::wstring> ret;
-    for (ef::Win::FileFinder fde(mask, ef::Win::FileFinder::files); fde; ++fde)
-        ret.push_back(fde.getName());
+    WIN32_FIND_DATA fd;
+    HANDLE h = FindFirstFile(mask.c_str(), &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+                ret.push_back(fd.cFileName);
+        } while (FindNextFile(h, &fd));
+        FindClose(h);
+    }
     return ret;
 }
 
@@ -412,53 +348,85 @@ std::vector<std::wstring> Util::Sys::getFiles(std::wstring mask)
 bool Util::Sys::readFileBack(HANDLE file, void* buf, int bytes)
 {
     DWORD read;
-    return SetFilePointer(file, -bytes, 0, FILE_CURRENT) != -1
+    return SetFilePointer(file, -bytes, 0, FILE_CURRENT) != INVALID_SET_FILE_POINTER
         && ReadFile(file, buf, bytes, &read, 0)
         && int(read) == bytes
-        && SetFilePointer(file, -bytes, 0, FILE_CURRENT) != -1;
+        && SetFilePointer(file, -bytes, 0, FILE_CURRENT) != INVALID_SET_FILE_POINTER;
+}
+
+
+std::wstring Util::Sys::getModulePath(HMODULE mod)
+{
+    std::vector<WCHAR> buf(MAX_PATH);
+    for (;;) {
+        DWORD n = GetModuleFileName(mod, &buf[0], DWORD(buf.size()));
+        if (n == 0)
+            return L"";
+        if (n < buf.size())
+            return std::wstring(&buf[0], n);
+        buf.resize(buf.size() * 2);
+    }
+}
+
+
+std::wstring Util::Sys::dirSpec(const std::wstring& path)
+{
+    std::wstring::size_type i = path.find_last_of(L"\\/");
+    return i == std::wstring::npos ? L"" : path.substr(0, i + 1);
+}
+
+
+std::wstring Util::Sys::fileSpec(const std::wstring& path)
+{
+    std::wstring::size_type i = path.find_last_of(L"\\/");
+    return i == std::wstring::npos ? path : path.substr(i + 1);
+}
+
+
+std::wstring Util::Sys::getLastErrorStr()
+{
+    LPWSTR msg = 0;
+    DWORD n = FormatMessage(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        0, GetLastError(), 0, LPWSTR(&msg), 0, 0);
+    std::wstring ret(msg ? msg : L"", n);
+    LocalFree(msg);
+    return ret;
+}
+
+
+bool Util::Sys::isWin8orGreater()
+{
+    // without a compatibility manifest the reported version is capped at 6.2 (Win8),
+    // which is still enough for this check
+    OSVERSIONINFOEX osvi = { sizeof(osvi), 6, 2 };
+    DWORDLONG mask = 0;
+    VER_SET_CONDITION(mask, VER_MAJORVERSION, VER_GREATER_EQUAL);
+    VER_SET_CONDITION(mask, VER_MINORVERSION, VER_GREATER_EQUAL);
+    return !!VerifyVersionInfo(&osvi, VER_MAJORVERSION | VER_MINORVERSION, mask);
 }
 
 
 COLORREF Util::Clr::light(COLORREF clr)
 {
-    double r = GetRValue(clr) / 255.0;
-    double g = GetGValue(clr) / 255.0;
-    double b = GetBValue(clr) / 255.0;
-    double h, l, s;
-    ef::RGBtoHLS(r, g, b, h, l, s);
-
-    l = min(1, l+0.25);
-
-    ef::HLStoRGB(h, l, s, r, g, b);
-    return RGB(r*255, g*255, b*255);
+    WORD h, l, s;
+    ColorRGBToHLS(clr, &h, &l, &s);
+    return ColorHLSToRGB(h, WORD(std::min(240, l + 60)), s);
 }
 
 
 COLORREF Util::Clr::dark(COLORREF clr)
 {
-    double r = GetRValue(clr) / 255.0;
-    double g = GetGValue(clr) / 255.0;
-    double b = GetBValue(clr) / 255.0;
-    double h, l, s;
-    ef::RGBtoHLS(r, g, b, h, l, s);
-
-    l = max(0, l-0.25);
-
-    ef::HLStoRGB(h, l, s, r, g, b);
-    return RGB(r*255, g*255, b*255);
+    WORD h, l, s;
+    ColorRGBToHLS(clr, &h, &l, &s);
+    return ColorHLSToRGB(h, WORD(std::max(0, l - 60)), s);
 }
 
 
 BOOL Util::Wnd::moveWindow(HWND wnd, const RECT& rc, BOOL repaint)
 {
-    return MoveWindow(wnd, rc.left, rc.top, 
+    return MoveWindow(wnd, rc.left, rc.top,
         rc.right-rc.left, rc.bottom-rc.top, repaint);
-}
-
-
-BOOL Util::Gfx::rectangle(HDC dc, const RECT& rc)
-{
-    return Rectangle(dc, rc.left, rc.top, rc.right, rc.bottom);
 }
 
 
@@ -468,11 +436,37 @@ bool Util::Wnd::psChanged(HWND page)
 }
 
 
+bool Util::Text::wildimatch(const std::wstring& pattern, const std::wstring& s)
+{
+    // iterative matcher with single-star backtracking
+    size_t p = 0, i = 0, starP = std::wstring::npos, starI = 0;
+    while (i < s.size()) {
+        if (p < pattern.size() && (pattern[p] == L'?' ||
+            towlower(pattern[p]) == towlower(s[i]))) {
+            ++p; ++i;
+        }
+        else if (p < pattern.size() && pattern[p] == L'*') {
+            starP = p++;
+            starI = i;
+        }
+        else if (starP != std::wstring::npos) {
+            p = starP + 1;
+            i = ++starI;
+        }
+        else
+            return false;
+    }
+    while (p < pattern.size() && pattern[p] == L'*')
+        ++p;
+    return p == pattern.size();
+}
+
+
 // removes the first accelerator prefix ('&')
 // from a string and returns the result
 std::wstring Util::Text::remAccel(std::wstring s)
 {
-    std::wstring::size_type i = s.find_first_of(L"&");
+    std::wstring::size_type i = s.find(L'&');
     if (i != std::wstring::npos) s.erase(i, 1);
     return s;
 }
@@ -489,45 +483,24 @@ bool Util::Gfx::getBmpSize(HBITMAP bmp, SIZE& sz)
 }
 
 
-bool Util::Gfx::getBmpSizeAndBpp(HBITMAP bmp, SIZE& sz, int& bpp)
-{
-    BITMAP bm;
-    if (!GetObject(bmp, sizeof(bm), &bm))
-        return false;
-    sz.cx = bm.bmWidth;
-    sz.cy = abs(bm.bmHeight);
-    bpp   = bm.bmBitsPixel;
-    return true;
-}
-
-
-// Convert white/lgray/dgray of bmp to shades of 'clr'.
+// Replace each clrs[n][0] pixel with clrs[n][1].
 // NOTE: Bmp must *not* be selected in any DC for this to succeed.
 //
-bool Util::Gfx::remapBmpColors(HBITMAP bmp, COLORREF clrs[][2], int cnt)
+bool Util::Gfx::remapBmpColors(HBITMAP bmp, const COLORREF clrs[][2], int cnt)
 {
     bool ok = false;
     SIZE sz;
-    int bpp;
-    if (getBmpSizeAndBpp(bmp, sz, bpp)) {
+    if (getBmpSize(bmp, sz)) {
         if (HDC dc = CreateCompatibleDC(0)) {
-            if (HBITMAP orgBmp = HBITMAP(SelectObject(dc, bmp))) {
-                if (bpp == 16) {
-                    // In 16-bpp modes colors get changed,
-                    // e.g. light gray (0xC0C0C0) becomes 0xC6C6C6
-                    // GetNearestColor() only works for paletized modes,
-                    // so we'll have to patch our source colors manually
-                    // using Nearest16BppColor.
-                    ef::Win::Nearest16BppColor nearClr;
-                    for (int n = 0; n < cnt; ++n)
-                        clrs[n][0] = nearClr(clrs[n][0]);
-                }
+            if (HGDIOBJ orgBmp = SelectObject(dc, bmp)) {
                 for (int y = 0; y < sz.cy; ++y) {
                     for (int x = 0; x < sz.cx; ++x) {
                         COLORREF clr = GetPixel(dc, x, y);
                         for (int n = 0; n < cnt; ++n)
-                            if (clr == clrs[n][0])
+                            if (clr == clrs[n][0]) {
                                 SetPixelV(dc, x, y, clrs[n][1]);
+                                break;
+                            }
                     }
                 }
                 ok = true;
@@ -536,28 +509,127 @@ bool Util::Gfx::remapBmpColors(HBITMAP bmp, COLORREF clrs[][2], int cnt)
             DeleteDC(dc);
         }
     }
-
-    //ostringstream oss;
-    //oss << hex << setfill('0');
-    //for (set<COLORREF>::const_iterator it = clrSet.begin(); it != clrSet.end(); ++it)
-    //  oss << setw(6) << *it << "\r\n";
-    //MessageBoxA(app.mainWnd, oss.str().c_str(), "Unique clrs", 0);
-
     return ok;
 }
 
 
-// Returns the part of a string after the last occurrence of a token.
-// Example: substrAfter("foobar", "oo") --> "bar"
-// Returns "" on error.
-std::wstring Util::Text::substrAfterLast(const std::wstring& s, const std::wstring& delim)
+// Create a region from all pixels of a bitmap not matching the mask color.
+//
+HRGN Util::Gfx::makeRegionFromBmp(HBITMAP bmp, COLORREF clrMask)
 {
-    std::wstring::size_type i = s.find_last_of(delim);
-    return i == std::wstring::npos ? L"" : s.substr(i + delim.length());
+    SIZE sz;
+    if (!getBmpSize(bmp, sz))
+        return 0;
+
+    HDC dc = CreateCompatibleDC(0);
+    if (!dc)
+        return 0;
+    HGDIOBJ orgBmp = SelectObject(dc, bmp);
+
+    HRGN rgn = CreateRectRgn(0, 0, 0, 0);
+    for (int y = 0; rgn && y < sz.cy; ++y) {
+        for (int x = 0; x < sz.cx; ) {
+            // skip transparent pixels, then collect an opaque run
+            while (x < sz.cx && GetPixel(dc, x, y) == clrMask)
+                ++x;
+            int x0 = x;
+            while (x < sz.cx && GetPixel(dc, x, y) != clrMask)
+                ++x;
+            if (x > x0) {
+                HRGN run = CreateRectRgn(x0, y, x, y + 1);
+                CombineRgn(rgn, rgn, run, RGN_OR);
+                DeleteObject(run);
+            }
+        }
+    }
+
+    SelectObject(dc, orgBmp);
+    DeleteDC(dc);
+    return rgn;
 }
 
 
-bool Util::Sys::isWin8orGreater()
+HFONT Util::Gfx::createDerivedFont(HFONT base, LONG weight)
 {
-    return ef::Win::OsVer().majMin() >= ef::Win::packVer(6, 2);
+    LOGFONT lf;
+    if (!GetObject(base, sizeof(lf), &lf))
+        return 0;
+    lf.lfWeight = weight;
+    return CreateFontIndirect(&lf);
+}
+
+
+bool Util::RegKey::create(HKEY parent, const std::wstring& path)
+{
+    close();
+    return RegCreateKeyEx(parent, path.c_str(), 0, 0, 0,
+        KEY_READ | KEY_WRITE, 0, &key, 0) == ERROR_SUCCESS;
+}
+
+
+bool Util::RegKey::open(HKEY parent, const std::wstring& path)
+{
+    close();
+    return RegOpenKeyEx(parent, path.c_str(), 0, KEY_READ | KEY_WRITE, &key) == ERROR_SUCCESS;
+}
+
+
+void Util::RegKey::close()
+{
+    if (key) {
+        RegCloseKey(key);
+        key = 0;
+    }
+}
+
+
+bool Util::RegKey::getDWord(const std::wstring& name, DWORD& value) const
+{
+    DWORD type, size = sizeof(value);
+    return RegQueryValueEx(key, name.c_str(), 0, &type, LPBYTE(&value), &size) == ERROR_SUCCESS
+        && type == REG_DWORD;
+}
+
+
+bool Util::RegKey::setDWord(const std::wstring& name, DWORD value)
+{
+    return RegSetValueEx(key, name.c_str(), 0, REG_DWORD,
+        LPBYTE(&value), sizeof(value)) == ERROR_SUCCESS;
+}
+
+
+bool Util::RegKey::getString(const std::wstring& name, std::wstring& value) const
+{
+    DWORD type, size = 0;
+    if (RegQueryValueEx(key, name.c_str(), 0, &type, 0, &size) != ERROR_SUCCESS
+        || (type != REG_SZ && type != REG_EXPAND_SZ))
+        return false;
+    std::vector<WCHAR> buf(size / sizeof(WCHAR) + 1, L'\0');
+    size = DWORD(buf.size() * sizeof(WCHAR));
+    if (RegQueryValueEx(key, name.c_str(), 0, &type, LPBYTE(&buf[0]), &size) != ERROR_SUCCESS)
+        return false;
+    value = &buf[0];
+    return true;
+}
+
+
+bool Util::RegKey::setString(const std::wstring& name, const std::wstring& value)
+{
+    return RegSetValueEx(key, name.c_str(), 0, REG_SZ,
+        reinterpret_cast<const BYTE*>(value.c_str()),
+        DWORD((value.size() + 1) * sizeof(WCHAR))) == ERROR_SUCCESS;
+}
+
+
+bool Util::RegKey::deleteValue(const std::wstring& name)
+{
+    return RegDeleteValue(key, name.c_str()) == ERROR_SUCCESS;
+}
+
+
+DWORD Util::RegKey::getValueType(const std::wstring& name) const
+{
+    DWORD type;
+    return RegQueryValueEx(key, name.c_str(), 0, &type, 0, 0) == ERROR_SUCCESS
+        ? type : REG_NONE;
 }

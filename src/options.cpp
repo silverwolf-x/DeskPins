@@ -3,28 +3,32 @@
 #include "options.h"
 
 
-const HKEY Options::HKCU = HKEY_CURRENT_USER;
+namespace {
+    const HKEY    HKCU             = HKEY_CURRENT_USER;
+    const LPCWSTR REG_PATH_APP     = L"Software\\Elias Fotinis\\DeskPins";
+    const LPCWSTR REG_APR_SUBPATH  = L"AutoPinRules";
+    const LPCWSTR REG_PATH_RUN     = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
-LPCWSTR Options::REG_PATH_EF      = L"Software\\Elias Fotinis";
-LPCWSTR Options::REG_APR_SUBPATH  = L"AutoPinRules";
-LPCWSTR Options::REG_PATH_RUN     = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    const LPCWSTR REG_PINCLR       = L"PinColor";
+    const LPCWSTR REG_POLLRATE     = L"PollRate";
+    const LPCWSTR REG_TRAYDBLCLK   = L"TrayDblClk";
+    const LPCWSTR REG_AUTOPINON    = L"Enabled";
+    const LPCWSTR REG_AUTOPINDELAY = L"Delay";
+    const LPCWSTR REG_AUTOPINCOUNT = L"Count";
+    const LPCWSTR REG_HOTKEYSON    = L"HotKeysOn";
+    const LPCWSTR REG_HOTNEWPIN    = L"HotKeyNewPin";
+    const LPCWSTR REG_HOTTOGGLEPIN = L"HotKeyTogglePin";
+    const LPCWSTR REG_UILANG       = L"UILanguage";
+    const LPCWSTR REG_LCLHELP      = L"LocalizedHelp";
 
-LPCWSTR Options::REG_PINCLR       = L"PinColor";
-LPCWSTR Options::REG_POLLRATE     = L"PollRate";
-LPCWSTR Options::REG_TRAYDBLCLK   = L"TrayDblClk";
-LPCWSTR Options::REG_AUTOPINON    = L"Enabled";
-LPCWSTR Options::REG_AUTOPINDELAY = L"Delay";
-LPCWSTR Options::REG_AUTOPINCOUNT = L"Count";
-LPCWSTR Options::REG_AUTOPINRULE  = L"AutoPinRule%d";
-LPCWSTR Options::REG_HOTKEYSON    = L"HotKeysOn";
-LPCWSTR Options::REG_HOTNEWPIN    = L"HotKeyNewPin";
-LPCWSTR Options::REG_HOTTOGGLEPIN = L"HotKeyTogglePin";
-LPCWSTR Options::REG_LCLUI        = L"LocalizedUI";
-LPCWSTR Options::REG_LCLHELP      = L"LocalizedHelp";
+    // autopin rule value name: rule index + field flag (e.g. "3D")
+    std::wstring ruleValueName(int i, WCHAR flag) {
+        return std::to_wstring(i) + flag;
+    }
+}
 
 
-bool 
-HotKey::load(ef::Win::RegKeyH& key, LPCWSTR val)
+bool HotKey::load(const Util::RegKey& key, LPCWSTR val)
 {
     DWORD dw;
     if (!key.getDWord(val, dw))
@@ -40,43 +44,27 @@ HotKey::load(ef::Win::RegKeyH& key, LPCWSTR val)
 }
 
 
-bool 
-HotKey::save(ef::Win::RegKeyH& key, LPCWSTR val) const
+bool HotKey::save(Util::RegKey& key, LPCWSTR val) const
 {
     return key.setDWord(val, MAKEWORD(vk, mod));
 }
 
 
-bool 
-AutoPinRule::match(HWND wnd) const
+bool AutoPinRule::match(HWND wnd) const
 {
-    return enabled 
-        && ef::wildimatch(ttl, ef::Win::WndH(wnd).getText()) 
-        && ef::wildimatch(cls, ef::Win::WndH(wnd).getClassName());
+    return enabled
+        && Util::Text::wildimatch(ttl, Util::Wnd::getText(wnd))
+        && Util::Text::wildimatch(cls, Util::Wnd::getClassName(wnd));
 }
 
 
-class NumFlagValueName {
-    const int num;
-public:
-    NumFlagValueName(int num) : num(num) {}
-    std::wstring operator()(WCHAR flag) {
-        WCHAR buf[20];
-        wsprintf(buf, L"%d%c", num, flag);
-        return buf;
-    }
-};
-
-
-bool 
-AutoPinRule::load(ef::Win::RegKeyH& key, int i)
+bool AutoPinRule::load(const Util::RegKey& key, int i)
 {
-    NumFlagValueName val(i);
     DWORD enabled_dw;
-    if (!key.getString(val(L'D'), descr) || 
-        !key.getString(val(L'T'), ttl) ||
-        !key.getString(val(L'C'), cls) ||
-        !key.getDWord(val(L'E'), enabled_dw))
+    if (!key.getString(ruleValueName(i, L'D'), descr) ||
+        !key.getString(ruleValueName(i, L'T'), ttl) ||
+        !key.getString(ruleValueName(i, L'C'), cls) ||
+        !key.getDWord(ruleValueName(i, L'E'), enabled_dw))
     {
         return false;
     }
@@ -85,31 +73,26 @@ AutoPinRule::load(ef::Win::RegKeyH& key, int i)
 }
 
 
-bool 
-AutoPinRule::save(ef::Win::RegKeyH& key, int i) const
+bool AutoPinRule::save(Util::RegKey& key, int i) const
 {
-    NumFlagValueName val(i);
-    return key.setString(val(L'D'), descr) &&
-           key.setString(val(L'T'), ttl) &&
-           key.setString(val(L'C'), cls) &&
-           key.setDWord(val(L'E'), enabled);
+    return key.setString(ruleValueName(i, L'D'), descr) &&
+           key.setString(ruleValueName(i, L'T'), ttl) &&
+           key.setString(ruleValueName(i, L'C'), cls) &&
+           key.setDWord(ruleValueName(i, L'E'), enabled);
 }
 
 
-void 
-AutoPinRule::remove(ef::Win::RegKeyH& key, int i)
+void AutoPinRule::remove(Util::RegKey& key, int i)
 {
-    NumFlagValueName val(i);
-    key.deleteValue(val(L'D'));
-    key.deleteValue(val(L'T'));
-    key.deleteValue(val(L'C'));
-    key.deleteValue(val(L'E'));
+    const WCHAR flags[] = { L'D', L'T', L'C', L'E' };
+    for (WCHAR flag : flags)
+        key.deleteValue(ruleValueName(i, flag));
 }
 
 
-Options::Options() : 
+Options::Options() :
     pinClr(RGB(255,0,0)),
-    trackRate(100,10,1000,10),
+    trackRate(20,10,1000,10),
     dblClkTray(false),
     runOnStartup(false),
     hotkeysOn(true),
@@ -119,32 +102,22 @@ Options::Options() :
     autoPinDelay(200,100,10000,50),
     helpFile(L"DeskPins.chm")    // init, in case key doesn't exist
 {
-    // set higher tracking rate for Win2K+ (higher WM_TIMER resolution)
-
-    if (ef::Win::OsVer().major() >= HIWORD(ef::Win::OsVer::win2000))
-        trackRate.value = 20;
 }
 
 
-Options::~Options()
+bool Options::save() const
 {
-}
+    Util::RegKey key;
+    if (!key.create(HKCU, REG_PATH_APP)) return false;
 
-
-bool 
-Options::save() const
-{
-    std::wstring appKeyPath = std::wstring(REG_PATH_EF) + L'\\' + App::APPNAME;
-    ef::Win::AutoRegKeyH key = ef::Win::RegKeyH::create(HKCU, appKeyPath);
-    if (!key) return false;
-
-    key.setDWord(REG_PINCLR, pinClr < 7 ? 0 : pinClr);   // HACK: see load()
+    key.setDWord(REG_PINCLR, pinClr);
     key.setDWord(REG_POLLRATE, trackRate.value);
     key.setDWord(REG_TRAYDBLCLK, dblClkTray);
-    ef::Win::AutoRegKeyH runKey = ef::Win::RegKeyH::create(HKCU, REG_PATH_RUN);
-    if (runKey) {
+
+    Util::RegKey runKey;
+    if (runKey.create(HKCU, REG_PATH_RUN)) {
         if (runOnStartup)
-            runKey.setString(App::APPNAME, ef::Win::ModuleH(0).getFileName());
+            runKey.setString(App::APPNAME, L"\"" + Util::Sys::getModulePath(0) + L"\"");
         else
             runKey.deleteValue(App::APPNAME);
     }
@@ -153,61 +126,46 @@ Options::save() const
     hotEnterPin.save(key, REG_HOTNEWPIN);
     hotTogglePin.save(key, REG_HOTTOGGLEPIN);
 
-    ef::Win::AutoRegKeyH apKey = ef::Win::RegKeyH::create(key, REG_APR_SUBPATH);
-    if (apKey) {
-        int oldCount;
-        if (!apKey.getDWord(REG_AUTOPINCOUNT, reinterpret_cast<DWORD&>(oldCount)))
+    Util::RegKey apKey;
+    if (apKey.create(key, REG_APR_SUBPATH)) {
+        DWORD oldCount;
+        if (!apKey.getDWord(REG_AUTOPINCOUNT, oldCount))
             oldCount = 0;
         apKey.setDWord(REG_AUTOPINON, autoPinOn);
         apKey.setDWord(REG_AUTOPINDELAY, autoPinDelay.value);
-        apKey.setDWord(REG_AUTOPINCOUNT, autoPinRules.size());
+        apKey.setDWord(REG_AUTOPINCOUNT, DWORD(autoPinRules.size()));
         int n;
         for (n = 0; n < int(autoPinRules.size()); ++n)
             autoPinRules[n].save(apKey, n);
         // remove old left-over rules
-        for (; n < oldCount; ++n)
+        for (; n < int(oldCount); ++n)
             AutoPinRule::remove(apKey, n);
     }
 
-    key.setString(REG_LCLUI, uiFile);
+    key.setString(REG_UILANG, uiLang);
     key.setString(REG_LCLHELP, helpFile);
 
     return true;
 }
 
 
-bool
-Options::load()
+bool Options::load()
 {
-    std::wstring appKeyPath = std::wstring(REG_PATH_EF) + L'\\' + App::APPNAME;
-    ef::Win::AutoRegKeyH key = ef::Win::RegKeyH::open(HKCU, appKeyPath);
-    if (!key) return false;
+    Util::RegKey key;
+    if (!key.open(HKCU, REG_PATH_APP)) return false;
 
     DWORD dw;
     std::wstring buf;
 
-    if (key.getDWord(REG_PINCLR, dw)) {
+    if (key.getDWord(REG_PINCLR, dw))
         pinClr = COLORREF(dw & 0xFFFFFF);
-        // HACK: Prior to version 1.3 the color was an index (0..6), 
-        //       but from v1.3+ a full 24-bit clr value is used.
-        //       To avoid interpreting the old setting as an RGB
-        //       (and thus producing a nasty black clr)
-        //       we have to translate the older index values into real RGB.
-        //       Also, in save() we replace COLORREFs < 0x000007 with 0 (black)
-        //       to get this straight (and hope no-one notices :D ).
-        // FIXME: no longer needed
-        if (pinClr > 0 && pinClr < 7) {
-            using namespace Util::Clr;
-            const COLORREF clr[6] = {red, yellow, lime, cyan, blue, magenta};
-            pinClr = clr[pinClr-1];
-        }
-    }
-    if (key.getDWord(REG_POLLRATE, dw) && trackRate.inRange(dw))
-        trackRate = dw;
+    if (key.getDWord(REG_POLLRATE, dw) && trackRate.inRange(int(dw)))
+        trackRate = int(dw);
     if (key.getDWord(REG_TRAYDBLCLK, dw))
         dblClkTray = dw != 0;
-    ef::Win::AutoRegKeyH runKey = ef::Win::RegKeyH::open(HKCU, REG_PATH_RUN);
-    if (runKey)
+
+    Util::RegKey runKey;
+    if (runKey.open(HKCU, REG_PATH_RUN))
         runOnStartup = runKey.getValueType(App::APPNAME) == REG_SZ;
 
     if (key.getDWord(REG_HOTKEYSON, dw))
@@ -215,12 +173,12 @@ Options::load()
     hotEnterPin.load(key, REG_HOTNEWPIN);
     hotTogglePin.load(key, REG_HOTTOGGLEPIN);
 
-    ef::Win::AutoRegKeyH apKey = ef::Win::RegKeyH::open(key, REG_APR_SUBPATH);
-    if (apKey) {
+    Util::RegKey apKey;
+    if (apKey.open(key, REG_APR_SUBPATH)) {
         if (apKey.getDWord(REG_AUTOPINON, dw))
             autoPinOn = dw != 0;
-        if (apKey.getDWord(REG_AUTOPINDELAY, dw) && autoPinDelay.inRange(dw))
-            autoPinDelay = dw;
+        if (apKey.getDWord(REG_AUTOPINDELAY, dw) && autoPinDelay.inRange(int(dw)))
+            autoPinDelay = int(dw);
         if (apKey.getDWord(REG_AUTOPINCOUNT, dw)) {
             for (int n = 0; n < int(dw); ++n) {
                 AutoPinRule rule;
@@ -230,8 +188,8 @@ Options::load()
         }
     }
 
-    if (key.getString(REG_LCLUI, buf))
-        uiFile = buf;
+    if (key.getString(REG_UILANG, buf))
+        uiLang = buf;
     if (key.getString(REG_LCLHELP, buf))
         helpFile = buf;
 

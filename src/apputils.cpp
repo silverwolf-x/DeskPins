@@ -4,21 +4,20 @@
 #include "apputils.h"
 
 
-HWINEVENTHOOK EventHookWindowCreationMonitor::hook = 0;
-HWND EventHookWindowCreationMonitor::wnd = 0;
-int EventHookWindowCreationMonitor::msgId = 0;
+HWINEVENTHOOK WindowCreationMonitor::hook = 0;
+HWND WindowCreationMonitor::wnd = 0;
+int WindowCreationMonitor::msgId = 0;
 
 
 void PendingWindows::add(HWND wnd)
 {
-    Entry entry(wnd, GetTickCount());
-    entries.push_back(entry);
+    entries.push_back({ wnd, GetTickCount() });
 }
 
 
 void PendingWindows::check(HWND wnd, const Options& opt)
 {
-    for (int n = entries.size()-1; n >= 0; --n) {
+    for (int n = int(entries.size())-1; n >= 0; --n) {
         if (timeToChkWnd(entries[n].time, opt)) {
             if (checkWnd(entries[n].wnd, opt))
                 Util::App::pinWindow(wnd, entries[n].wnd, opt.trackRate.value, true);
@@ -37,17 +36,17 @@ bool PendingWindows::timeToChkWnd(DWORD t, const Options& opt)
 
 bool PendingWindows::checkWnd(HWND target, const Options& opt)
 {
-    for (int n = 0; n < int(opt.autoPinRules.size()); ++n)
-        if (opt.autoPinRules[n].match(target))
+    for (const AutoPinRule& rule : opt.autoPinRules)
+        if (rule.match(target))
             return true;
     return false;
 }
 
 
-bool EventHookWindowCreationMonitor::init(HWND wnd, int msgId)
+bool WindowCreationMonitor::init(HWND wnd, int msgId)
 {
     if (!hook) {
-        hook = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_CREATE, 
+        hook = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_CREATE,
             0, proc, 0, 0, WINEVENT_OUTOFCONTEXT);
         if (hook) {
             this->wnd = wnd;
@@ -58,7 +57,7 @@ bool EventHookWindowCreationMonitor::init(HWND wnd, int msgId)
 }
 
 
-bool EventHookWindowCreationMonitor::term()
+bool WindowCreationMonitor::term()
 {
     if (hook && UnhookWinEvent(hook)) {
         hook = 0;
@@ -67,48 +66,13 @@ bool EventHookWindowCreationMonitor::term()
 }
 
 
-VOID CALLBACK EventHookWindowCreationMonitor::proc(HWINEVENTHOOK hook, DWORD event,
+VOID CALLBACK WindowCreationMonitor::proc(HWINEVENTHOOK hook, DWORD event,
     HWND hwnd, LONG idObject, LONG idChild, DWORD dwEventThread, DWORD dwmsEventTime)
 {
-    if (hook == EventHookWindowCreationMonitor::hook &&
+    if (hook == WindowCreationMonitor::hook &&
         event == EVENT_OBJECT_CREATE &&
         idObject == OBJID_WINDOW)
     {
         PostMessage(wnd, msgId, (WPARAM)hwnd, 0);
     }
-}
-
-
-bool HookDllWindowCreationMonitor::init(HWND wnd, int msgId)
-{
-    if (!dll) {
-        dll = LoadLibrary(L"dphook.dll");
-        if (!dll)
-            return false;
-    }
-
-    dllInitFunc = initF(GetProcAddress(dll, "init"));
-    dllTermFunc = termF(GetProcAddress(dll, "term"));
-    if (!dllInitFunc || !dllTermFunc) {
-        term();
-        return false;
-    }
-
-    return dllInitFunc(wnd, msgId);
-}
-
-
-bool HookDllWindowCreationMonitor::term()
-{
-    if (!dll)
-        return true;
-
-    if (dllTermFunc)
-        dllTermFunc();
-
-    bool ok = !!FreeLibrary(dll);
-    if (ok)
-        dll = 0;
-
-    return ok;
 }

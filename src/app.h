@@ -8,33 +8,22 @@
 class Options;
 
 
-// Desktop Window Manager management.
-// Dynamically loads dwmapi.dll and provides access to cached API state.
+// Desktop Window Manager state.
 // The main window needs to call this to handle broadcast messages.
 //
-class Dwm : boost::noncopyable
+class Dwm : NonCopyable
 {
-    typedef HRESULT (WINAPI* DwmIsCompositionEnabled_Ptr)(BOOL*);
-public: 
-    Dwm() {
-        dll = ef::Win::ModuleH::load(L"dwmapi");
-        if (dll) {
-            DwmIsCompositionEnabled_ = (DwmIsCompositionEnabled_Ptr)dll.getProcAddress("DwmIsCompositionEnabled");
-        }
-        wmDwmCompositionChanged();
-    }
+public:
+    Dwm() { wmDwmCompositionChanged(); }
     bool isCompositionEnabled() const {
         return cachedIsCompositionEnabled;
     }
     // WM_DWMCOMPOSITIONCHANGED handler
-    // TODO: use a msg filter instead of specific handler
     void wmDwmCompositionChanged() {
         BOOL b;
-        cachedIsCompositionEnabled = dll && SUCCEEDED(DwmIsCompositionEnabled_(&b)) && b;
+        cachedIsCompositionEnabled = SUCCEEDED(DwmIsCompositionEnabled(&b)) && b;
     }
 private:
-    ef::Win::AutoModuleH dll;
-    DwmIsCompositionEnabled_Ptr DwmIsCompositionEnabled_;
     bool cachedIsCompositionEnabled;
 };
 
@@ -42,11 +31,10 @@ private:
 // Main application state.
 // A single global instance is available to all translation units.
 //
-struct App : boost::noncopyable {
-    ef::Win::PrevInstance prevInst;
-    HWND      mainWnd, aboutDlg, optionsDlg, layerWnd; //, activeModelessDlg;
+struct App : NonCopyable {
+    HANDLE    instMutex;
+    HWND      mainWnd, aboutDlg, layerWnd;
     HINSTANCE inst;
-    HMODULE   resMod;
     PinShape  pinShape;
     HICON     smIcon, smClrIcon;
     Help      help;
@@ -63,7 +51,6 @@ struct App : boost::noncopyable {
         WM_PINSTATUS,
         WM_PINREQ,
         WM_QUEUEWINDOW,
-        WM_CMDLINE_OPTION,  // for posting CMDLINE_* options in wparam
 
         // pin wnd messages
         WM_PIN_ASSIGNWND = WM_USER,
@@ -78,16 +65,14 @@ struct App : boost::noncopyable {
         TIMERID_AUTOPIN = 1,
     };
 
-    App() : prevInst(L"EFDeskPinsRunning"),
-        mainWnd(0), aboutDlg(0), optionsDlg(0), layerWnd(0), 
-        /*activeModelessDlg(0), */ inst(0), resMod(0), 
-        smIcon(0), smClrIcon(0), 
+    App() : instMutex(0),
+        mainWnd(0), aboutDlg(0), layerWnd(0),
+        inst(0),
+        smIcon(0), smClrIcon(0),
         pinsUsed(0), optionPage(0), trayIcon(WM_TRAYICON, 0) {}
-    ~App() { freeResMod(); DeleteObject(smIcon); DeleteObject(smClrIcon); }
+    ~App();
 
-
-    bool loadResMod(const std::wstring& file, HWND msgParent);
-    void freeResMod();
+    static void setUILanguage(const std::wstring& locale);
     bool initComctl();
     bool chkPrevInst();
     bool regWndCls();
@@ -95,3 +80,6 @@ struct App : boost::noncopyable {
     void createSmClrIcon(COLORREF clr);
     std::wstring trayIconTip();
 };
+
+
+extern App app;

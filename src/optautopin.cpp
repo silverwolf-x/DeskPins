@@ -2,13 +2,14 @@
 #include "options.h"
 #include "util.h"
 #include "apputils.h"
+#include "optionsdlg.h"
 #include "optautopin.h"
 #include "resource.h"
 
 
 // Static control subclass, showing an icon that can be toggled on/off.
 //
-class IconCtl : boost::noncopyable
+class IconCtl : NonCopyable
 {
 public:
     enum {
@@ -17,15 +18,15 @@ public:
 
     static IconCtl* subclass(HWND wnd, HICON icon)
     {
-        WNDPROC orgProc = WNDPROC(GetWindowLong(wnd, GWL_WNDPROC));
+        WNDPROC orgProc = WNDPROC(GetWindowLongPtr(wnd, GWLP_WNDPROC));
         if (!orgProc)
             return 0;
         IconCtl* obj = new IconCtl();
         obj->orgProc = orgProc;
         obj->icon = icon;
         obj->show = true;
-        SetWindowLong(wnd, GWL_USERDATA, LONG(obj));
-        SetWindowLong(wnd, GWL_WNDPROC, LONG(wndProc));
+        SetWindowLongPtr(wnd, GWLP_USERDATA, LONG_PTR(obj));
+        SetWindowLongPtr(wnd, GWLP_WNDPROC, LONG_PTR(wndProc));
         return obj;
     }
 
@@ -36,9 +37,9 @@ private:
 
     IconCtl() {}
 
-    static BOOL CALLBACK wndProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
+    static LRESULT CALLBACK wndProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
     {
-        IconCtl* obj = (IconCtl*)GetWindowLong(wnd, GWL_USERDATA);
+        IconCtl* obj = (IconCtl*)GetWindowLongPtr(wnd, GWLP_USERDATA);
         if (!obj)
             return DefWindowProc(wnd, msg, wparam, lparam);
 
@@ -78,7 +79,7 @@ private:
 
 
 namespace {
-    BOOL CALLBACK apEditRuleDlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
+    INT_PTR CALLBACK apEditRuleDlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
     {
         static int tracking = 0;    // 0: none, 1: title, 2: class
         static HWND hitWnd = 0;
@@ -93,7 +94,7 @@ namespace {
                     EndDialog(wnd, -1);
                     return true;
                 }
-                SetWindowLong(wnd, DWL_USER, lparam);
+                SetWindowLongPtr(wnd, DWLP_USER, lparam);
                 AutoPinRule& rule = *reinterpret_cast<AutoPinRule*>(lparam);
 
                 hitWnd = 0;
@@ -112,7 +113,7 @@ namespace {
                     CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
                     wnd, 0, app.inst, 0);
 
-                TOOLINFO ti;
+                TOOLINFO ti = {};
                 ti.cbSize = sizeof(ti);
                 ti.uFlags = TTF_SUBCLASS | TTF_IDISHWND;
                 ti.hwnd = wnd;
@@ -120,11 +121,11 @@ namespace {
                 ti.lParam = 0;
 
                 ti.uId = UINT_PTR(GetDlgItem(wnd, IDC_TTLPICK));
-                ti.lpszText = L"Drag icon to get window title";
+                ti.lpszText = MAKEINTRESOURCE(IDS_TIP_TTLPICK);   // loaded from ti.hinst
                 SendMessage(tooltip, TTM_ADDTOOL, 0, LPARAM(&ti));
 
                 ti.uId = UINT_PTR(GetDlgItem(wnd, IDC_CLSPICK));
-                ti.lpszText = L"Drag icon to get window class";
+                ti.lpszText = MAKEINTRESOURCE(IDS_TIP_CLSPICK);
                 SendMessage(tooltip, TTM_ADDTOOL, 0, LPARAM(&ti));
 
                 return true;
@@ -144,16 +145,11 @@ namespace {
 
                         hitWnd = newWnd;
 
-                        if (tracking == 1) {
-                            ef::Win::WndH w = GetDlgItem(wnd, IDC_TITLE);
-                            w.setText(ef::Win::WndH(hitWnd).getText());
-                            w.update();
-                        }
-                        else {
-                            ef::Win::WndH w = GetDlgItem(wnd, IDC_CLASS);
-                            w.setText(ef::Win::WndH(hitWnd).getClassName());
-                            w.update();
-                        }
+                        HWND edit = GetDlgItem(wnd, tracking == 1 ? IDC_TITLE : IDC_CLASS);
+                        SetWindowText(edit, (tracking == 1
+                            ? Util::Wnd::getText(hitWnd)
+                            : Util::Wnd::getClassName(hitWnd)).c_str());
+                        UpdateWindow(edit);
 
                         Util::App::markWnd(hitWnd, true);
 
@@ -182,14 +178,12 @@ namespace {
                 switch (id) {
                     case IDOK: {
                         AutoPinRule& rule = 
-                            *reinterpret_cast<AutoPinRule*>(GetWindowLong(wnd, DWL_USER));
+                            *Util::Wnd::getDlgData<AutoPinRule>(wnd);
                         WCHAR buf[256];
-                        GetDlgItemText(wnd, IDC_DESCR, buf, sizeof(buf));  rule.descr = buf;
-                        GetDlgItemText(wnd, IDC_TITLE, buf, sizeof(buf));  rule.ttl = buf;
-                        GetDlgItemText(wnd, IDC_CLASS, buf, sizeof(buf));  rule.cls = buf;
-                        // allow empty strings (at least title can be empty...)
-                        //if (rule.ttl.empty()) rule.ttl = "*";
-                        //if (rule.cls.empty()) rule.cls = "*";          
+                        GetDlgItemText(wnd, IDC_DESCR, buf, ARRAYSIZE(buf));  rule.descr = buf;
+                        GetDlgItemText(wnd, IDC_TITLE, buf, ARRAYSIZE(buf));  rule.ttl = buf;
+                        GetDlgItemText(wnd, IDC_CLASS, buf, ARRAYSIZE(buf));  rule.cls = buf;
+                        [[fallthrough]];
                     }
                     case IDCANCEL:
                         EndDialog(wnd, id);
@@ -286,12 +280,13 @@ void RulesList::init(HWND wnd)
     // adjust column size to client width
     RECT rc;
     GetClientRect(list, &rc);    
-    LVCOLUMN lvc;
+    LVCOLUMN lvc = {};
     lvc.mask = LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
     lvc.fmt  = LVCFMT_LEFT;
     lvc.cx   = rc.right - rc.left;
-    lvc.pszText = L"Rules";
-    ListView_InsertColumn(list, 0, LPARAM(&lvc));
+    Util::Res::ResStr title(IDS_RULES_COLUMN);
+    lvc.pszText = const_cast<LPWSTR>(LPCWSTR(title));
+    ListView_InsertColumn(list, 0, &lvc);
 }
 
 
@@ -335,7 +330,7 @@ void RulesList::getAll(AutoPinRules& rules)
 
 void RulesList::remove(std::vector<int> indices)
 {
-    for (int n = indices.size()-1; n >= 0; --n)
+    for (int n = int(indices.size())-1; n >= 0; --n)
         ListView_DeleteItem(list, indices[n]);
 }
 
@@ -346,7 +341,7 @@ int RulesList::addNew()
 {
     AutoPinRule* rule = new AutoPinRule;
 
-    LVITEM lvi;
+    LVITEM lvi = {};
     lvi.mask = LVIF_TEXT | LVIF_PARAM;
     lvi.iItem = ListView_GetItemCount(list);
     lvi.iSubItem = 0;
@@ -364,7 +359,7 @@ int RulesList::addNew()
 //
 AutoPinRule* RulesList::getData(int i) const
 {
-    LVITEM lvi;
+    LVITEM lvi = {};
     lvi.mask = LVIF_PARAM;
     lvi.iItem = i;
     lvi.iSubItem = 0;
@@ -376,7 +371,7 @@ AutoPinRule* RulesList::getData(int i) const
 //
 bool RulesList::setData(int i, AutoPinRule* rule)
 {
-    LVITEM lvi;
+    LVITEM lvi = {};
     lvi.mask = LVIF_PARAM;
     lvi.iItem = i;
     lvi.iSubItem = 0;
@@ -476,7 +471,7 @@ void RulesList::moveSelUp()
     // - nothing's selected
     // - everything's selected
     // - the first item is selected
-    if (!sel.size() || sel.size() == cnt || sel.front() == 0)
+    if (!sel.size() || int(sel.size()) == cnt || sel.front() == 0)
         return;
 
     // swap each selected item with the one before it
@@ -505,11 +500,11 @@ void RulesList::moveSelDown()
     // - nothing's selected
     // - everything's selected
     // - the last item is selected
-    if (!sel.size() || sel.size() == cnt || sel.back() == cnt-1)
+    if (!sel.size() || int(sel.size()) == cnt || sel.back() == cnt-1)
         return;
 
     // swap each selected item with the one after it
-    for (int n = sel.size()-1; n >= 0 ; --n) {
+    for (int n = int(sel.size())-1; n >= 0 ; --n) {
         int i = sel[n];
         // move data
         AutoPinRule* tmp = getData(i+1);
@@ -567,11 +562,10 @@ bool OptAutoPin::evInitDialog(HWND wnd, HWND focus, LPARAM param)
 
     // save the data ptr
     PROPSHEETPAGE& psp = *reinterpret_cast<PROPSHEETPAGE*>(param);
-    Options& opt = reinterpret_cast<OptionsPropSheetData*>(psp.lParam)->opt;
-    SetWindowLong(wnd, DWL_USER, psp.lParam);
+    SetWindowLongPtr(wnd, DWLP_USER, psp.lParam);
+    Options& opt = OptionsPropSheetData::get(wnd).opt;
 
-
-    CheckDlgButton(wnd, IDC_AUTOPIN_ON, opt.autoPinOn);
+    CheckDlgButton(wnd, IDC_AUTOPIN_ON, opt.autoPinOn ? BST_CHECKED : BST_UNCHECKED);
     cmAutoPinOn(wnd);  // simulate check to setup other ctrls
 
     SendDlgItemMessage(wnd, IDC_RULE_DELAY_UD, UDM_SETRANGE, 0, 
@@ -591,7 +585,7 @@ bool OptAutoPin::evInitDialog(HWND wnd, HWND focus, LPARAM param)
 
 void OptAutoPin::apply(HWND wnd, WindowCreationMonitor& winCreMon)
 {
-    Options& opt = reinterpret_cast<OptionsPropSheetData*>(GetWindowLong(wnd, DWL_USER))->opt;
+    Options& opt = OptionsPropSheetData::get(wnd).opt;
 
     bool autoPinOn = IsDlgButtonChecked(wnd, IDC_AUTOPIN_ON) == BST_CHECKED;
     if (opt.autoPinOn != autoPinOn) {
@@ -605,7 +599,8 @@ void OptAutoPin::apply(HWND wnd, WindowCreationMonitor& winCreMon)
 
     opt.autoPinDelay.value = opt.autoPinDelay.getUI(wnd, IDC_RULE_DELAY);
 
-    if (opt.autoPinOn = autoPinOn)
+    opt.autoPinOn = autoPinOn;
+    if (autoPinOn)
         SetTimer(app.mainWnd, App::TIMERID_AUTOPIN, opt.autoPinDelay.value, 0);
     else
         KillTimer(app.mainWnd, App::TIMERID_AUTOPIN);
@@ -616,12 +611,12 @@ void OptAutoPin::apply(HWND wnd, WindowCreationMonitor& winCreMon)
 
 bool OptAutoPin::validate(HWND wnd)
 {
-    Options& opt = reinterpret_cast<OptionsPropSheetData*>(GetWindowLong(wnd, DWL_USER))->opt;
+    Options& opt = OptionsPropSheetData::get(wnd).opt;
     return opt.autoPinDelay.validateUI(wnd, IDC_RULE_DELAY, true);
 }
 
 
-BOOL CALLBACK OptAutoPin::dlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
+INT_PTR CALLBACK OptAutoPin::dlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     switch (msg) {
         case WM_INITDIALOG: {
@@ -632,20 +627,12 @@ BOOL CALLBACK OptAutoPin::dlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lpar
             return true;
         }
         case WM_NOTIFY: {
-            NMHDR nmhdr = *reinterpret_cast<NMHDR*>(lparam);
+            const NMHDR& nmhdr = *reinterpret_cast<NMHDR*>(lparam);
+            if (OptionsDlg::handlePageNotify(wnd, nmhdr, validate))
+                return true;
             switch (nmhdr.code) {
-            case PSN_SETACTIVE: {
-                HWND tab = PropSheet_GetTabControl(nmhdr.hwndFrom);
-                app.optionPage = SendMessage(tab, TCM_GETCURSEL, 0, 0);
-                SetWindowLong(wnd, DWL_MSGRESULT, 0);
-                return true;
-            }
-            case PSN_KILLACTIVE: {
-                SetWindowLong(wnd, DWL_MSGRESULT, !validate(wnd));
-                return true;
-            }
             case PSN_APPLY: {
-                WindowCreationMonitor& winCreMon = reinterpret_cast<OptionsPropSheetData*>(GetWindowLong(wnd, DWL_USER))->winCreMon;
+                WindowCreationMonitor& winCreMon = OptionsPropSheetData::get(wnd).winCreMon;
                 apply(wnd, winCreMon);
                 return true;
             }
@@ -657,9 +644,9 @@ BOOL CALLBACK OptAutoPin::dlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lpar
                 if (wparam == IDC_RULE_DELAY_UD) {
                     NM_UPDOWN& nmud = *(NM_UPDOWN*)lparam;
                     Options& opt = 
-                        reinterpret_cast<OptionsPropSheetData*>(GetWindowLong(wnd, DWL_USER))->opt;
+                        OptionsPropSheetData::get(wnd).opt;
                     nmud.iDelta *= opt.autoPinDelay.step;
-                    SetWindowLong(wnd, DWL_MSGRESULT, FALSE);   // allow change
+                    Util::Wnd::setDlgResult(wnd, FALSE);   // allow change
                     return true;
                 }
                 else
@@ -686,7 +673,7 @@ BOOL CALLBACK OptAutoPin::dlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lpar
                         // (if the CTRL is held)
                         AutoPinRule rule;
                         if (rlist.getRule(i, rule)) {
-                            int res = Util::Res::LocalizedDialogBoxParam(IDD_EDIT_AUTOPIN_RULE, 
+                            INT_PTR res = DialogBoxParam(app.inst, MAKEINTRESOURCE(IDD_EDIT_AUTOPIN_RULE), 
                                 wnd, apEditRuleDlgProc, LPARAM(&rule));
                             if (res == IDOK) {
                                 rlist.setRule(i, rule);
@@ -698,13 +685,8 @@ BOOL CALLBACK OptAutoPin::dlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lpar
                 return true;
             }
             case LVN_DELETEITEM: {
-                NMLISTVIEW& nmlv = *(NMLISTVIEW*)lparam;
-                LVITEM lvi;
-                lvi.mask = TVIF_PARAM;
-                lvi.iItem = nmlv.iItem;
-                lvi.iSubItem = 0;
-                if (ListView_GetItem(nmlv.hdr.hwndFrom, &lvi))
-                    delete (AutoPinRule*)lvi.lParam;
+                const NMLISTVIEW& nmlv = *(NMLISTVIEW*)lparam;
+                delete (AutoPinRule*)nmlv.lParam;
                 return true;
             }
             case LVN_GETDISPINFO: {
@@ -749,7 +731,7 @@ BOOL CALLBACK OptAutoPin::dlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lpar
                 case IDC_AUTOPIN_ON:    return cmAutoPinOn(wnd);
                 case IDC_ADD: {
                     AutoPinRule rule;
-                    int res = Util::Res::LocalizedDialogBoxParam(IDD_EDIT_AUTOPIN_RULE, 
+                    INT_PTR res = DialogBoxParam(app.inst, MAKEINTRESOURCE(IDD_EDIT_AUTOPIN_RULE), 
                         wnd, apEditRuleDlgProc, LPARAM(&rule));
                     if (res == IDOK) {
                         int i = rlist.addNew();
@@ -763,7 +745,7 @@ BOOL CALLBACK OptAutoPin::dlgProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lpar
                     AutoPinRule rule;
                     int i = rlist.getFirstSel();
                     if (i >= 0 && rlist.getRule(i, rule)) {
-                        int res = Util::Res::LocalizedDialogBoxParam(IDD_EDIT_AUTOPIN_RULE, 
+                        INT_PTR res = DialogBoxParam(app.inst, MAKEINTRESOURCE(IDD_EDIT_AUTOPIN_RULE), 
                             wnd, apEditRuleDlgProc, LPARAM(&rule));
                         if (res == IDOK) {
                             rlist.setRule(i, rule);

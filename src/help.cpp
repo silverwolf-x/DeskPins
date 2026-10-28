@@ -4,17 +4,20 @@
 #include "resource.h"
 
 
-bool Help::init(HINSTANCE inst, const std::wstring& fname) 
+Help::~Help()
+{
+    if (hhctrl)
+        FreeLibrary(hhctrl);
+}
+
+
+bool Help::init(HINSTANCE inst, const std::wstring& fname)
 {
     hlpFile = L"";
 
-    std::wstring path = ef::dirSpec(ef::Win::getModulePath(inst));
+    std::wstring path = Util::Sys::dirSpec(Util::Sys::getModulePath(inst));
     if (path.empty())
         return false;
-
-#if defined(DEBUG) || defined(_DEBUG)
-    path += L"..\\help\\";
-#endif
 
     hlpFile = path + fname;
     return true;
@@ -27,10 +30,20 @@ bool Help::init(HINSTANCE inst, const std::wstring& fname)
 //                     "::\someTopic.html#namedAnchor"
 HWND Help::show(HWND wnd, const std::wstring& topic)
 {
-    if (hlpFile.empty()) {
+    typedef HWND (WINAPI* HtmlHelpW_Ptr)(HWND, LPCWSTR, UINT, DWORD_PTR);
+    const UINT HH_DISPLAY_TOPIC = 0;
+
+    if (!hhctrl)
+        hhctrl = LoadLibrary(L"hhctrl.ocx");
+    HtmlHelpW_Ptr htmlHelp = hhctrl
+        ? HtmlHelpW_Ptr(GetProcAddress(hhctrl, "HtmlHelpW")) : 0;
+
+    if (hlpFile.empty() || !htmlHelp ||
+        GetFileAttributes(hlpFile.c_str()) == INVALID_FILE_ATTRIBUTES)
+    {
         Util::App::error(wnd, Util::Res::ResStr(IDS_ERR_HELPMISSING));
         return 0;
     }
 
-    return ef::Win::HTMLHelp::obj().dispTopic(wnd, (hlpFile + topic).c_str());
+    return htmlHelp(wnd, (hlpFile + topic).c_str(), HH_DISPLAY_TOPIC, 0);
 }
