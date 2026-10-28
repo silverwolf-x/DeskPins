@@ -1,0 +1,96 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed only to publish releases on tags
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Determine version
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $v = $env:GITHUB_REF_NAME.Substring(1)
+            if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "Tag must look like v1.2.3, got $env:GITHUB_REF_NAME" }
+            $label = $v
+          } else {
+            $v = (Select-String -Path CMakeLists.txt -Pattern 'set\(DP_VERSION "([^"]+)"').Matches[0].Groups[1].Value
+            $label = "$v-$($env:GITHUB_SHA.Substring(0,7))"
+          }
+          "version=$v"   >> $env:GITHUB_OUTPUT
+          "label=$label" >> $env:GITHUB_OUTPUT
+
+      # CMake + Ninja (much faster than the Visual Studio generator)
+      - uses: lukka/get-cmake@latest
+
+      # MSVC x64 developer environment for Ninja
+      - uses: TheMrMilchmann/setup-msvc-dev@v4.1.0
+        with:
+          arch: x64
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DDP_VERSION=${{ steps.ver.outputs.version }}"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Cache NSIS
+        id: nsis-cache
+        uses: actions/cache@v6
+        with:
+          path: C:\Program Files (x86)\NSIS
+          key: nsis-${{ runner.os }}-v1
+
+      - name: Install NSIS
+        if: steps.nsis-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) {
+            choco install nsis -y --no-progress
+          }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $label = '${{ steps.ver.outputs.label }}'
+          $bin   = Resolve-Path build
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $dist  = Resolve-Path dist
+
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" /V2 "/DVERSION=${{ steps.ver.outputs.version }}" "/DBINDIR=$bin" `
+            "/DOUTFILE=$dist\DeskPins-$label-setup.exe" installer\DeskPins.nsi
+          if ($LASTEXITCODE) { throw "makensis failed" }
+
+          Compress-Archive -Path "$bin\DeskPins.exe", help\DeskPins.chm, license.txt `
+            -DestinationPath "$dist\DeskPins-$label-portable.zip"
+
+          Get-ChildItem $dist, "$bin\DeskPins.exe" | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: DeskPins-${{ steps.ver.outputs.label }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          name: DeskPins ${{ steps.ver.outputs.version }}
+          files: dist/*
+          generate_release_notes: true
