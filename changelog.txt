@@ -1,3 +1,12 @@
+v1.33 -- unreleased
+- Removed dependencies on Boost and the unpublished eflib; builds with CMake and current MSVC.
+- Native 64-bit build with static CRT.
+- Fixed buffer overruns (tray tip, string loading, dialog text) and 64-bit pointer truncation.
+- "Run on system startup" now enables the Apply button and quotes the exe path.
+- About dialog links use the standard SysLink control.
+- Simplified Chinese user interface built in; language follows Windows or can be chosen in Options.
+- Installer: optional desktop shortcut, Simplified Chinese installer UI.
+
 v1.32 -- 2015.02.20
 - Fixed inability to autopin windows of 64-bit processes.
 
